@@ -72,13 +72,14 @@ type model struct {
 	allFiles      []string // Flat list of all file paths for searching
 
 	// Context groups
-	layers        []Layer                    // Ordered list of layers
-	layerGroups   map[string][]ContextGroup  // Layer ID -> groups in that layer
-	contextGroups []ContextGroup             // All groups (flat list)
-	fileToGroups  map[string][]string        // Maps file path to group names
-	showingGroups bool
-	layerCursor   int // Which layer (row) is selected in swimlane
-	groupCursor   int // Which group within layer (column) is selected
+	layers             []Layer                    // Ordered list of layers
+	layerGroups        map[string][]ContextGroup  // Layer ID -> groups in that layer
+	contextGroups      []ContextGroup             // All groups (flat list)
+	fileToGroups       map[string][]string        // Maps file path to group names
+	showingGroups      bool
+	layerCursor        int // Which layer (row) is selected in swimlane
+	groupCursor        int // Which group within layer (column) is selected
+	groupsScrollOffset int // Scroll offset for groups overlay
 
 	// File watcher
 	watcher *fsnotify.Watcher
@@ -713,6 +714,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.contextGroups) > 0 {
 				m.showingGroups = true
 				m.groupCursor = 0
+				m.layerCursor = 0
+				m.groupsScrollOffset = 0
 			}
 			return m, nil
 		}
@@ -973,6 +976,13 @@ func (m model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Get flat ordered list of all groups for linear navigation
+	allGroups := m.getFlatGroupList()
+	totalGroups := len(allGroups)
+
+	// Convert current 2D position to flat index
+	flatIndex := m.getFlatGroupIndex()
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -981,47 +991,16 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "up", "k":
-			// Move up within current layer
-			if m.groupCursor > 0 {
-				m.groupCursor--
+			// Move up through all groups (cross layer boundaries)
+			if flatIndex > 0 {
+				m.setGroupFromFlatIndex(flatIndex - 1)
 			}
 			return m, nil
 
 		case "down", "j":
-			// Move down within current layer
-			maxGroups := m.getGroupCountForCurrentLayer()
-			if m.groupCursor < maxGroups-1 {
-				m.groupCursor++
-			}
-			return m, nil
-
-		case "left", "h":
-			// Move to previous layer
-			if len(m.layers) > 0 && m.layerCursor > 0 {
-				m.layerCursor--
-				// Reset group cursor, clamping to available groups
-				maxGroups := m.getGroupCountForCurrentLayer()
-				if m.groupCursor >= maxGroups {
-					m.groupCursor = maxGroups - 1
-				}
-				if m.groupCursor < 0 {
-					m.groupCursor = 0
-				}
-			}
-			return m, nil
-
-		case "right", "l":
-			// Move to next layer
-			if len(m.layers) > 0 && m.layerCursor < len(m.layers)-1 {
-				m.layerCursor++
-				// Reset group cursor, clamping to available groups
-				maxGroups := m.getGroupCountForCurrentLayer()
-				if m.groupCursor >= maxGroups {
-					m.groupCursor = maxGroups - 1
-				}
-				if m.groupCursor < 0 {
-					m.groupCursor = 0
-				}
+			// Move down through all groups (cross layer boundaries)
+			if flatIndex < totalGroups-1 {
+				m.setGroupFromFlatIndex(flatIndex + 1)
 			}
 			return m, nil
 
@@ -1032,6 +1011,27 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 				copyGroupToClipboard(m.rootPath, *selectedGroup)
 				m.showingGroups = false
 			}
+			return m, nil
+		}
+
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			// Check if click is on a group line and copy it
+			clickedGroup := m.getGroupAtClick(msg.X, msg.Y)
+			if clickedGroup != nil {
+				copyGroupToClipboard(m.rootPath, *clickedGroup)
+				m.showingGroups = false
+			}
+		} else if msg.Button == tea.MouseButtonWheelUp {
+			// Scroll view up (don't move selection)
+			m.groupsScrollOffset -= 3
+			if m.groupsScrollOffset < 0 {
+				m.groupsScrollOffset = 0
+			}
+			return m, nil
+		} else if msg.Button == tea.MouseButtonWheelDown {
+			// Scroll view down (don't move selection)
+			m.groupsScrollOffset += 3
 			return m, nil
 		}
 	}
@@ -1048,6 +1048,164 @@ func (m model) getGroupCountForCurrentLayer() int {
 	}
 	layer := m.layers[m.layerCursor]
 	return len(m.getOrderedGroupsForLayer(layer.ID))
+}
+
+// getFlatGroupList returns all groups in display order (for linear navigation)
+func (m model) getFlatGroupList() []ContextGroup {
+	if len(m.layers) == 0 {
+		return m.contextGroups
+	}
+
+	var result []ContextGroup
+	for _, layer := range m.layers {
+		groups := m.getOrderedGroupsForLayer(layer.ID)
+		result = append(result, groups...)
+	}
+	return result
+}
+
+// getFlatGroupIndex converts current 2D cursor position to flat index
+func (m model) getFlatGroupIndex() int {
+	if len(m.layers) == 0 {
+		return m.groupCursor
+	}
+
+	flatIdx := 0
+	for i := 0; i < m.layerCursor; i++ {
+		flatIdx += len(m.getOrderedGroupsForLayer(m.layers[i].ID))
+	}
+	flatIdx += m.groupCursor
+	return flatIdx
+}
+
+// setGroupFromFlatIndex sets layerCursor and groupCursor from a flat index
+func (m *model) setGroupFromFlatIndex(flatIdx int) {
+	if len(m.layers) == 0 {
+		m.groupCursor = flatIdx
+		return
+	}
+
+	remaining := flatIdx
+	for i, layer := range m.layers {
+		groupCount := len(m.getOrderedGroupsForLayer(layer.ID))
+		if remaining < groupCount {
+			m.layerCursor = i
+			m.groupCursor = remaining
+			return
+		}
+		remaining -= groupCount
+	}
+}
+
+// getGroupAtClick returns the group at the clicked screen position, or nil
+func (m model) getGroupAtClick(x, y int) *ContextGroup {
+	// Calculate overlay position (centered)
+	boxWidth := 55
+	boxHeight := m.height - 16 + 10 // content + fixed elements
+	if boxHeight > m.height-4 {
+		boxHeight = m.height - 4
+	}
+
+	boxLeft := (m.width - boxWidth) / 2
+	boxTop := (m.height - boxHeight) / 2
+
+	// Check if click is within the box
+	if x < boxLeft || x > boxLeft+boxWidth || y < boxTop || y > boxTop+boxHeight {
+		return nil
+	}
+
+	// Calculate relative Y position within content area
+	// Account for border(1) + padding(1) + title(1) = 3 lines before content
+	contentY := y - boxTop - 3
+
+	// Build the line-to-group mapping
+	lineToGroup := make(map[int]*ContextGroup)
+	currentLine := 0
+
+	if len(m.layers) == 0 {
+		for i := range m.contextGroups {
+			lineToGroup[currentLine] = &m.contextGroups[i]
+			currentLine++
+		}
+	} else {
+		for _, layer := range m.layers {
+			groups := m.layerGroups[layer.ID]
+			if len(groups) == 0 {
+				continue
+			}
+			currentLine += 2 // separator + layer name
+
+			orderedGroups := m.getOrderedGroupsForLayer(layer.ID)
+			for i := range orderedGroups {
+				lineToGroup[currentLine] = &orderedGroups[i]
+				currentLine++
+			}
+		}
+	}
+
+	// Adjust for scroll offset
+	maxContentHeight := m.height - 16
+	if maxContentHeight < 8 {
+		maxContentHeight = 8
+	}
+
+	flatIndex := m.getFlatGroupIndex()
+	allGroups := m.getFlatGroupList()
+	selectedLineIdx := 0
+	currentLine = 0
+	for i, g := range allGroups {
+		if len(m.layers) > 0 {
+			// Account for layer headers
+			for _, layer := range m.layers {
+				if len(m.layerGroups[layer.ID]) > 0 {
+					if i == 0 || m.getLayerForGroup(allGroups[i-1].Name) != layer.ID {
+						if m.getLayerForGroup(g.Name) == layer.ID {
+							currentLine += 2
+							break
+						}
+					}
+				}
+			}
+		}
+		if i == flatIndex {
+			selectedLineIdx = currentLine
+		}
+		currentLine++
+	}
+
+	scrollOffset := 0
+	totalLines := currentLine
+	if totalLines > maxContentHeight {
+		scrollOffset = selectedLineIdx - maxContentHeight/2
+		if scrollOffset < 0 {
+			scrollOffset = 0
+		}
+		if scrollOffset > totalLines-maxContentHeight {
+			scrollOffset = totalLines - maxContentHeight
+		}
+	}
+
+	// Account for scroll indicator at top
+	if scrollOffset > 0 {
+		contentY--
+	}
+
+	actualLine := contentY + scrollOffset
+	if group, ok := lineToGroup[actualLine]; ok {
+		return group
+	}
+
+	return nil
+}
+
+// getLayerForGroup returns the layer ID for a given group name
+func (m model) getLayerForGroup(groupName string) string {
+	for _, g := range m.contextGroups {
+		if g.Name == groupName {
+			return g.Layer
+		}
+	}
+	return ""
 }
 
 // Navigate to a file by expanding parent directories and moving cursor
@@ -1273,23 +1431,26 @@ func copyGroupToClipboard(rootPath string, group ContextGroup) {
 }
 
 func (m model) renderGroupsOverlay(background string) string {
-	var content strings.Builder
-
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	content.WriteString(titleStyle.Render("Context Groups"))
-	content.WriteString("\n")
+	separatorStyle := lipgloss.NewStyle().Faint(true)
+
+	// Build content as lines for scrolling support
+	var lines []string
+	var selectedLineIdx int // Track which line has the selected item
+
+	lines = append(lines, titleStyle.Render("Context Groups"))
 
 	if len(m.contextGroups) == 0 {
-		content.WriteString("\n")
-		content.WriteString(lipgloss.NewStyle().Faint(true).Render("No groups defined"))
-		content.WriteString("\n")
-		content.WriteString(lipgloss.NewStyle().Faint(true).Render("Add groups in .context-groups.md"))
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Faint(true).Render("No groups defined"))
+		lines = append(lines, lipgloss.NewStyle().Faint(true).Render("Add groups in .context-groups.md"))
 	} else if len(m.layers) == 0 {
 		// Fallback to simple list if no layers defined
-		content.WriteString("\n")
+		lines = append(lines, "")
 		for i, group := range m.contextGroups {
 			line := fmt.Sprintf("%s (%d files)", group.Name, len(group.Files))
 			if m.layerCursor == 0 && i == m.groupCursor {
+				selectedLineIdx = len(lines)
 				line = lipgloss.NewStyle().
 					Background(lipgloss.Color("205")).
 					Foreground(lipgloss.Color("0")).
@@ -1297,12 +1458,11 @@ func (m model) renderGroupsOverlay(background string) string {
 			} else {
 				line = lipgloss.NewStyle().Faint(true).Render(line)
 			}
-			content.WriteString(line + "\n")
+			lines = append(lines, line)
 		}
 	} else {
 		// Swimlane view
 		layerNameStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("105"))
-		separatorStyle := lipgloss.NewStyle().Faint(true)
 		selectedStyle := lipgloss.NewStyle().Background(lipgloss.Color("205")).Foreground(lipgloss.Color("0"))
 		normalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 		childStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
@@ -1321,10 +1481,8 @@ func (m model) renderGroupsOverlay(background string) string {
 				continue
 			}
 
-			content.WriteString(separatorStyle.Render("─────────────────────────────────────────────────"))
-			content.WriteString("\n")
-			content.WriteString(layerNameStyle.Render(layer.Name))
-			content.WriteString("\n")
+			lines = append(lines, separatorStyle.Render("─────────────────────────────────────────────────"))
+			lines = append(lines, layerNameStyle.Render(layer.Name))
 
 			// Render groups, with children indented under parents
 			rendered := make(map[string]bool)
@@ -1342,9 +1500,10 @@ func (m model) renderGroupsOverlay(background string) string {
 				isSelected := layerIdx == m.layerCursor && groupIdx == m.groupCursor
 				line := fmt.Sprintf("  [%s]", group.Name)
 				if isSelected {
-					content.WriteString(selectedStyle.Render(line))
+					selectedLineIdx = len(lines)
+					lines = append(lines, selectedStyle.Render(line))
 				} else {
-					content.WriteString(normalStyle.Render(line))
+					lines = append(lines, normalStyle.Render(line))
 				}
 				rendered[group.Name] = true
 				groupIdx++
@@ -1354,13 +1513,13 @@ func (m model) renderGroupsOverlay(background string) string {
 					// Find child group
 					for _, g := range groups {
 						if g.Name == childName {
-							content.WriteString("\n")
 							isChildSelected := layerIdx == m.layerCursor && groupIdx == m.groupCursor
 							childLine := fmt.Sprintf("    ↳ [%s]", g.Name)
 							if isChildSelected {
-								content.WriteString(selectedStyle.Render(childLine))
+								selectedLineIdx = len(lines)
+								lines = append(lines, selectedStyle.Render(childLine))
 							} else {
-								content.WriteString(childStyle.Render(childLine))
+								lines = append(lines, childStyle.Render(childLine))
 							}
 							rendered[childName] = true
 							groupIdx++
@@ -1368,7 +1527,6 @@ func (m model) renderGroupsOverlay(background string) string {
 						}
 					}
 				}
-				content.WriteString("\n")
 			}
 
 			// Render any remaining groups (children without parents in this layer)
@@ -1379,43 +1537,104 @@ func (m model) renderGroupsOverlay(background string) string {
 				isSelected := layerIdx == m.layerCursor && groupIdx == m.groupCursor
 				line := fmt.Sprintf("  [%s]", group.Name)
 				if isSelected {
-					content.WriteString(selectedStyle.Render(line))
+					selectedLineIdx = len(lines)
+					lines = append(lines, selectedStyle.Render(line))
 				} else {
-					content.WriteString(normalStyle.Render(line))
+					lines = append(lines, normalStyle.Render(line))
 				}
-				content.WriteString("\n")
 				rendered[group.Name] = true
 				groupIdx++
 			}
 		}
+	}
 
-		// Show selected group details
-		selectedGroup := m.getSelectedGroup()
-		if selectedGroup != nil {
-			content.WriteString(separatorStyle.Render("─────────────────────────────────────────────────"))
-			content.WriteString("\n")
-			detailStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-			content.WriteString(detailStyle.Render(fmt.Sprintf("%d files", len(selectedGroup.Files))))
-			if len(selectedGroup.Tags) > 0 {
-				content.WriteString(detailStyle.Render("  tags: " + strings.Join(selectedGroup.Tags, ", ")))
+	// Calculate max height for scrollable content
+	// Account for: border(2) + padding(2) + scroll indicators(2) + details(3) + footer(1) + buffer(2)
+	maxContentHeight := m.height - 16
+	if maxContentHeight < 8 {
+		maxContentHeight = 8
+	}
+
+	// Use stored scroll offset, but ensure selected item is visible
+	totalLines := len(lines)
+	scrollOffset := m.groupsScrollOffset
+
+	// Clamp scroll offset to valid range
+	maxScroll := totalLines - maxContentHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	// Ensure selected line is visible (for keyboard navigation)
+	if selectedLineIdx < scrollOffset {
+		scrollOffset = selectedLineIdx
+	} else if selectedLineIdx >= scrollOffset+maxContentHeight {
+		scrollOffset = selectedLineIdx - maxContentHeight + 1
+	}
+
+	// Build visible content
+	var content strings.Builder
+	endIdx := scrollOffset + maxContentHeight
+	if endIdx > totalLines {
+		endIdx = totalLines
+	}
+
+	// Add scroll indicator at top if scrolled
+	if scrollOffset > 0 {
+		content.WriteString(separatorStyle.Render("  ▲ more above"))
+		content.WriteString("\n")
+	}
+
+	for i := scrollOffset; i < endIdx; i++ {
+		content.WriteString(lines[i])
+		content.WriteString("\n")
+	}
+
+	// Add scroll indicator at bottom if more content
+	if endIdx < totalLines {
+		content.WriteString(separatorStyle.Render("  ▼ more below"))
+		content.WriteString("\n")
+	}
+
+	// Show selected group details (compact, single line each)
+	selectedGroup := m.getSelectedGroup()
+	if selectedGroup != nil {
+		content.WriteString(separatorStyle.Render("─────────────────────────────────────────────────"))
+		content.WriteString("\n")
+		detailStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+		content.WriteString(detailStyle.Render(fmt.Sprintf("%d files", len(selectedGroup.Files))))
+		if len(selectedGroup.Tags) > 0 {
+			content.WriteString(detailStyle.Render("  tags: " + strings.Join(selectedGroup.Tags, ", ")))
+		}
+		content.WriteString("\n")
+		if selectedGroup.Description != "" {
+			// Truncate description to fit on one line
+			desc := selectedGroup.Description
+			if len(desc) > 48 {
+				desc = desc[:45] + "..."
 			}
+			descStyle := lipgloss.NewStyle().Faint(true)
+			content.WriteString(descStyle.Render(desc))
 			content.WriteString("\n")
-			if selectedGroup.Description != "" {
-				descStyle := lipgloss.NewStyle().Faint(true).Width(45)
-				content.WriteString(descStyle.Render(selectedGroup.Description))
-			}
 		}
 	}
 
 	content.WriteString("\n")
-	content.WriteString(lipgloss.NewStyle().Faint(true).Render("[h/l] switch layer  [j/k] switch group  [enter/c] copy  [esc] close"))
+	content.WriteString(lipgloss.NewStyle().Faint(true).Render("[j/k] navigate  [enter/c] copy  [click] copy  [esc] close"))
 
-	// Style the box
+	// Style the box with max height
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("205")).
 		Padding(1, 2).
-		Width(55)
+		Width(55).
+		MaxHeight(m.height - 4)
 
 	groupsBox := boxStyle.Render(content.String())
 
