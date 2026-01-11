@@ -14,6 +14,16 @@ import (
 
 func initialModel(rootPath string) model {
 	absPath, _ := filepath.Abs(rootPath)
+
+	// Load user config
+	cfg := loadConfig(absPath)
+
+	// Determine split ratio (config or default)
+	splitRatio := 0.5
+	if cfg.SplitRatio >= 0.2 && cfg.SplitRatio <= 0.8 {
+		splitRatio = cfg.SplitRatio
+	}
+
 	entries := loadDirectory(absPath, 0)
 
 	// Set up search input
@@ -56,7 +66,7 @@ func initialModel(rootPath string) model {
 		entries:       entries,
 		cursor:        0,
 		activePane:    treePane,
-		splitRatio:    0.5, // Start with equal split
+		splitRatio:    splitRatio,
 		previewCache:  make(map[string]cachedPreview),
 		searchInput:   ti,
 		allFiles:      allFiles,
@@ -217,6 +227,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.draggingSplit {
 			if msg.Action == tea.MouseActionRelease {
 				m.draggingSplit = false
+				// Save config when drag ends
+				saveConfig(m.rootPath, Config{SplitRatio: m.splitRatio})
 			} else if msg.Action == tea.MouseActionMotion {
 				// Update split ratio based on mouse X position
 				newRatio := float64(msg.X) / float64(m.width)
@@ -384,6 +396,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tree.Width = m.leftPaneWidth() - 2
 				m.preview.Width = m.rightPaneWidth() - 2
 				m.tree.SetContent(m.renderTree())
+				saveConfig(m.rootPath, Config{SplitRatio: m.splitRatio})
 			}
 
 		case "left":
@@ -393,6 +406,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tree.Width = m.leftPaneWidth() - 2
 				m.preview.Width = m.rightPaneWidth() - 2
 				m.tree.SetContent(m.renderTree())
+				saveConfig(m.rootPath, Config{SplitRatio: m.splitRatio})
 			}
 
 		case "c":

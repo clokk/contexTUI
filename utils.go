@@ -12,6 +12,7 @@ import (
 	"github.com/alecthomas/chroma/v2/quick"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/sahilm/fuzzy"
@@ -125,6 +126,36 @@ func (m model) updatePreview() (model, tea.Cmd) {
 	}
 }
 
+// addLineNumbers prepends line numbers to each line of content
+func addLineNumbers(content string) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		return content
+	}
+
+	// Calculate gutter width based on total lines
+	gutterWidth := len(fmt.Sprintf("%d", len(lines)))
+	if gutterWidth < 4 {
+		gutterWidth = 4 // Minimum 4 chars for alignment
+	}
+
+	// Use lipgloss for consistent styling that won't be affected by syntax highlighting
+	gutterStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	var result strings.Builder
+	for i, line := range lines {
+		lineNum := fmt.Sprintf("%*d", gutterWidth, i+1)
+		// Render the gutter (number + separator) with lipgloss
+		gutter := gutterStyle.Render(lineNum + " │ ")
+		result.WriteString(gutter)
+		result.WriteString(line)
+		if i < len(lines)-1 {
+			result.WriteString("\n")
+		}
+	}
+	return result.String()
+}
+
 // humanSize formats bytes into a human-readable size string
 func humanSize(bytes int64) string {
 	const unit = 1024
@@ -141,11 +172,20 @@ func humanSize(bytes int64) string {
 
 // highlightCode uses chroma to syntax highlight code based on filename
 func highlightCode(code, filename string, maxWidth int) string {
+	// Calculate gutter width for line number adjustment
+	lineCount := strings.Count(code, "\n") + 1
+	gutterWidth := len(fmt.Sprintf("%d", lineCount))
+	if gutterWidth < 4 {
+		gutterWidth = 4
+	}
+	gutterTotal := gutterWidth + 3 // number + " │ "
+
 	// Skip highlighting for certain file types that don't benefit from it
 	skipExtensions := []string{".sum", ".lock", ".txt", ".log", ".csv", ".json"}
 	for _, ext := range skipExtensions {
 		if strings.HasSuffix(filename, ext) {
-			return wrapLines(code, maxWidth)
+			wrapped := wrapLines(code, maxWidth-gutterTotal)
+			return addLineNumbers(wrapped)
 		}
 	}
 
@@ -155,11 +195,13 @@ func highlightCode(code, filename string, maxWidth int) string {
 	err := quick.Highlight(&buf, code, filename, "terminal256", "monokai")
 	if err != nil {
 		// Fall back to plain text if highlighting fails
-		return wrapLines(code, maxWidth)
+		wrapped := wrapLines(code, maxWidth-gutterTotal)
+		return addLineNumbers(wrapped)
 	}
 
-	// Word wrap highlighted output
-	return wrapLines(buf.String(), maxWidth)
+	// Word wrap highlighted output and add line numbers
+	wrapped := wrapLines(buf.String(), maxWidth-gutterTotal)
+	return addLineNumbers(wrapped)
 }
 
 // wrapLines wraps text at word boundaries to fit within maxWidth
@@ -406,6 +448,16 @@ func (m model) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// stripLineNumbers removes the line number prefix from a line
+// Handles format: "   5 │ code" -> "code"
+func stripLineNumbers(line string) string {
+	// Find the separator "│ " and return everything after it
+	if idx := strings.Index(line, "│ "); idx != -1 {
+		return line[idx+len("│ "):]
+	}
+	return line
+}
+
 // copySelection copies the selected lines to clipboard
 func (m model) copySelection() {
 	if len(m.previewLines) == 0 || m.selectStart < 0 || m.selectEnd < 0 {
@@ -425,14 +477,19 @@ func (m model) copySelection() {
 		end = len(m.previewLines) - 1
 	}
 
-	// Extract selected lines
-	selected := strings.Join(m.previewLines[start:end+1], "\n")
-
-	// Strip ANSI codes before copying
-	clean := ansi.Strip(selected)
+	// Extract selected lines, stripping ANSI codes and line numbers
+	var cleanLines []string
+	for i := start; i <= end; i++ {
+		line := m.previewLines[i]
+		// Strip ANSI codes first
+		clean := ansi.Strip(line)
+		// Strip line number prefix
+		clean = stripLineNumbers(clean)
+		cleanLines = append(cleanLines, clean)
+	}
 
 	// Copy to clipboard
 	cmd := exec.Command("pbcopy")
-	cmd.Stdin = strings.NewReader(clean)
+	cmd.Stdin = strings.NewReader(strings.Join(cleanLines, "\n"))
 	cmd.Run()
 }

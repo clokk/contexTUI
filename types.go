@@ -118,3 +118,8 @@ type entry struct {
 	expanded bool
 	children []entry
 }
+
+// Config represents user preferences saved per-project
+type Config struct {
+	SplitRatio float64 `json:"splitRatio,omitempty"`
+}
