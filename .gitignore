@@ -1,0 +1,9 @@
+# Binary
+contexTUI
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
