@@ -7,10 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/chroma/v2/quick"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/sahilm/fuzzy"
 )
@@ -40,6 +42,7 @@ func (m model) updatePreview() (model, tea.Cmd) {
 			// Cache hit - use cached content
 			m.preview.SetContent(cached.content)
 			m.previewPath = e.path
+			m.previewLines = strings.Split(cached.content, "\n")
 			m.loading = false
 			m.preview.GotoTop()
 			return m, nil
@@ -263,5 +266,173 @@ func copyGroupToClipboard(rootPath string, group ContextGroup) {
 	// Use pbcopy on macOS
 	cmd := exec.Command("pbcopy")
 	cmd.Stdin = strings.NewReader(strings.Join(refs, " "))
+	cmd.Run()
+}
+
+// scrollTick returns a command that sends a scroll tick after a delay
+func scrollTick() tea.Cmd {
+	return tea.Tick(50*time.Millisecond, func(t time.Time) tea.Msg {
+		return scrollTickMsg{}
+	})
+}
+
+// updateSelect handles events in copy mode (custom selection with mouse)
+func (m model) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case scrollTickMsg:
+		// Continuous scroll while dragging near edge
+		if m.isSelecting && m.scrollDir != 0 {
+			if m.scrollDir < 0 {
+				m.preview.LineUp(1)
+				// Update selection to follow scroll
+				m.selectEnd = m.preview.YOffset
+			} else {
+				m.preview.LineDown(1)
+				// Update selection to follow scroll
+				m.selectEnd = m.preview.YOffset + m.preview.Height - 1
+			}
+			// Continue ticking while still scrolling
+			return m, scrollTick()
+		}
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc", "q":
+			// Exit copy mode
+			m.selectMode = false
+			m.selectStart = -1
+			m.selectEnd = -1
+			m.scrollDir = 0
+			return m, nil
+
+		case "v":
+			// If we have a selection, copy it first then exit
+			if m.selectStart >= 0 && m.selectEnd >= 0 {
+				m.copySelection()
+			}
+			m.selectMode = false
+			m.selectStart = -1
+			m.selectEnd = -1
+			m.scrollDir = 0
+			return m, nil
+
+		case "y", "c", "ctrl+c":
+			// Copy selection (ctrl+c works in copy mode instead of quit)
+			if m.selectStart >= 0 && m.selectEnd >= 0 {
+				m.copySelection()
+			}
+			return m, nil
+
+		// Scrolling
+		case "j", "down":
+			m.preview.LineDown(1)
+			return m, nil
+		case "k", "up":
+			m.preview.LineUp(1)
+			return m, nil
+		case "d", "ctrl+d":
+			m.preview.HalfViewDown()
+			return m, nil
+		case "u", "ctrl+u":
+			m.preview.HalfViewUp()
+			return m, nil
+		case "g":
+			m.preview.GotoTop()
+			return m, nil
+		case "G":
+			m.preview.GotoBottom()
+			return m, nil
+		}
+
+	case tea.MouseMsg:
+		// Calculate which line was clicked (accounting for header/border)
+		headerOffset := 2 // header + border
+		clickedLine := msg.Y - headerOffset + m.preview.YOffset
+
+		// Handle mouse actions
+		switch msg.Action {
+		case tea.MouseActionPress:
+			if msg.Button == tea.MouseButtonLeft {
+				// Start selection
+				m.isSelecting = true
+				m.selectStart = clickedLine
+				m.selectEnd = clickedLine
+			}
+
+		case tea.MouseActionRelease:
+			if msg.Button == tea.MouseButtonLeft {
+				m.isSelecting = false
+				m.scrollDir = 0 // Stop continuous scroll
+			}
+
+		case tea.MouseActionMotion:
+			// Update selection while dragging
+			if m.isSelecting {
+				m.selectEnd = clickedLine
+
+				// Check if near edges for continuous scroll
+				visibleTop := m.preview.YOffset
+				visibleBottom := m.preview.YOffset + m.preview.Height - 1
+				edgeZone := 3 // Lines from edge to trigger scroll
+
+				oldScrollDir := m.scrollDir
+
+				if clickedLine <= visibleTop+edgeZone && visibleTop > 0 {
+					m.scrollDir = -1 // Scroll up
+				} else if clickedLine >= visibleBottom-edgeZone {
+					m.scrollDir = 1 // Scroll down
+				} else {
+					m.scrollDir = 0 // Stop scrolling
+				}
+
+				// Start tick if we just entered an edge zone
+				if m.scrollDir != 0 && oldScrollDir == 0 {
+					return m, scrollTick()
+				}
+			}
+		}
+
+		// Handle scroll wheel (works independently of selection)
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.preview.LineUp(3)
+		case tea.MouseButtonWheelDown:
+			m.preview.LineDown(3)
+		}
+
+		return m, nil
+	}
+	return m, nil
+}
+
+// copySelection copies the selected lines to clipboard
+func (m model) copySelection() {
+	if len(m.previewLines) == 0 || m.selectStart < 0 || m.selectEnd < 0 {
+		return
+	}
+
+	start, end := m.selectStart, m.selectEnd
+	if start > end {
+		start, end = end, start
+	}
+
+	// Clamp to valid range
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(m.previewLines) {
+		end = len(m.previewLines) - 1
+	}
+
+	// Extract selected lines
+	selected := strings.Join(m.previewLines[start:end+1], "\n")
+
+	// Strip ANSI codes before copying
+	clean := ansi.Strip(selected)
+
+	// Copy to clipboard
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(clean)
 	cmd.Run()
 }

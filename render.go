@@ -22,48 +22,75 @@ func (m model) View() string {
 	header := headerStyle.Render("contexTUI") +
 		lipgloss.NewStyle().Faint(true).Render(" " + m.rootPath)
 
-	// Tree pane - use dynamic width from splitRatio
-	leftWidth := m.leftPaneWidth()
-	rightWidth := m.rightPaneWidth()
 	paneHeight := m.height - 4 // header(1) + footer(1) + borders(2)
-
-	treeStyle := lipgloss.NewStyle().
-		Width(leftWidth).
-		Height(paneHeight).
-		Padding(0, 1)
-
-	if m.activePane == treePane {
-		treeStyle = treeStyle.BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("205"))
-	} else {
-		treeStyle = treeStyle.BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240"))
-	}
-
-	tree := treeStyle.Render(m.tree.View())
-
-	// Preview pane - use dynamic width
-	previewStyle := lipgloss.NewStyle().
-		Width(rightWidth).
-		Height(paneHeight).
-		Padding(0, 1)
-
-	if m.activePane == previewPane {
-		previewStyle = previewStyle.BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("205"))
-	} else {
-		previewStyle = previewStyle.BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240"))
-	}
-
-	preview := previewStyle.Render(m.preview.View())
-
-	// Footer - minimal, single line
 	footerStyle := lipgloss.NewStyle().Faint(true)
-	footer := footerStyle.Render(" [tab] switch  [j/k] nav  [←/→] resize  [c] copy  [/] search  [g] groups  [q] quit")
 
-	// Compose layout
-	body := lipgloss.JoinHorizontal(lipgloss.Top, tree, preview)
+	var body, footer string
+
+	// In copy mode, show only the preview pane at full width with selection highlighting
+	if m.selectMode {
+		fullWidth := m.width - 4 // borders
+		previewStyle := lipgloss.NewStyle().
+			Width(fullWidth).
+			Height(paneHeight).
+			Padding(0, 1).
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("205"))
+
+		// Render preview with selection highlighting
+		body = previewStyle.Render(m.renderPreviewWithSelection(fullWidth-2, paneHeight))
+
+		selectStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+		if m.selectStart >= 0 && m.selectEnd >= 0 {
+			start, end := m.selectStart, m.selectEnd
+			if start > end {
+				start, end = end, start
+			}
+			footer = selectStyle.Render(fmt.Sprintf(" COPY MODE [%d-%d] ", start+1, end+1)) +
+				footerStyle.Render("drag to select  [c/ctrl+c] copy  [j/k] scroll  [v] copy+exit  [esc] cancel")
+		} else {
+			footer = selectStyle.Render(" COPY MODE ") +
+				footerStyle.Render("drag to select  [c/ctrl+c] copy  [j/k] scroll  [v/esc] exit")
+		}
+	} else {
+		// Normal mode - show both panes
+		leftWidth := m.leftPaneWidth()
+		rightWidth := m.rightPaneWidth()
+
+		treeStyle := lipgloss.NewStyle().
+			Width(leftWidth).
+			Height(paneHeight).
+			Padding(0, 1)
+
+		if m.activePane == treePane {
+			treeStyle = treeStyle.BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("205"))
+		} else {
+			treeStyle = treeStyle.BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("240"))
+		}
+
+		tree := treeStyle.Render(m.tree.View())
+
+		previewStyle := lipgloss.NewStyle().
+			Width(rightWidth).
+			Height(paneHeight).
+			Padding(0, 1)
+
+		if m.activePane == previewPane {
+			previewStyle = previewStyle.BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("205"))
+		} else {
+			previewStyle = previewStyle.BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("240"))
+		}
+
+		preview := previewStyle.Render(m.preview.View())
+
+		body = lipgloss.JoinHorizontal(lipgloss.Top, tree, preview)
+		footer = footerStyle.Render(" [tab] switch  [j/k] nav  [←/→] resize  [c] copy path  [/] search  [g] groups  [v] copy mode  [q] quit")
+	}
+
 	mainView := header + "\n" + body + "\n" + footer
 
 	// Overlay search if active
@@ -77,6 +104,78 @@ func (m model) View() string {
 	}
 
 	return mainView
+}
+
+// renderPreviewWithSelection renders the preview content with selection highlighting
+func (m model) renderPreviewWithSelection(width, height int) string {
+	if len(m.previewLines) == 0 {
+		return "Select a file to preview"
+	}
+
+	var b strings.Builder
+
+	// Highlight style - strip existing colors and apply solid background
+	highlightStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("205")).
+		Foreground(lipgloss.Color("0"))
+
+	// Determine selection range
+	selStart, selEnd := -1, -1
+	if m.selectStart >= 0 && m.selectEnd >= 0 {
+		selStart, selEnd = m.selectStart, m.selectEnd
+		if selStart > selEnd {
+			selStart, selEnd = selEnd, selStart
+		}
+	}
+
+	// Render visible lines with selection highlighting
+	startLine := m.preview.YOffset
+	endLine := startLine + height
+	if endLine > len(m.previewLines) {
+		endLine = len(m.previewLines)
+	}
+
+	for i := startLine; i < endLine; i++ {
+		line := m.previewLines[i]
+
+		// Check if this line is in the selection
+		if selStart >= 0 && i >= selStart && i <= selEnd {
+			// Strip ANSI codes and apply highlight (selection overrides syntax colors)
+			cleanLine := stripAnsi(line)
+			// Pad line to full width for solid highlight block
+			if len(cleanLine) < width {
+				cleanLine = cleanLine + strings.Repeat(" ", width-len(cleanLine))
+			}
+			line = highlightStyle.Render(cleanLine)
+		}
+
+		b.WriteString(line)
+		if i < endLine-1 {
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
+}
+
+// stripAnsi removes ANSI escape codes from a string
+func stripAnsi(s string) string {
+	var result strings.Builder
+	inEscape := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
+		result.WriteRune(r)
+	}
+	return result.String()
 }
 
 func (m model) renderSearchOverlay(background string) string {

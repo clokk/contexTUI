@@ -186,6 +186,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateGroups(msg)
 	}
 
+	// Handle visual selection mode
+	if m.selectMode {
+		return m.updateSelect(msg)
+	}
+
 	switch msg := msg.(type) {
 	case fileLoadedMsg:
 		// Only update if this is still the file we're waiting for
@@ -193,6 +198,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = false
 			m.preview.SetContent(msg.content)
 			m.preview.GotoTop()
+			// Store lines for copy mode selection
+			m.previewLines = strings.Split(msg.content, "\n")
 			// Cache the rendered content
 			if !msg.modTime.IsZero() {
 				m.previewCache[msg.path] = cachedPreview{
@@ -414,6 +421,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.groupCursor = 0
 				m.layerCursor = 0
 				m.groupsScrollOffset = 0
+			}
+			return m, nil
+
+		case "v":
+			// Toggle copy mode
+			if !m.selectMode {
+				m.selectMode = true
+				m.selectStart = -1
+				m.selectEnd = -1
+				m.isSelecting = false
+			} else {
+				m.selectMode = false
 			}
 			return m, nil
 		}

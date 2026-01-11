@@ -72,7 +72,18 @@ type model struct {
 
 	// File watcher
 	watcher *fsnotify.Watcher
+
+	// Copy mode with custom selection
+	selectMode    bool
+	isSelecting   bool   // True while mouse is being dragged
+	selectStart   int    // Line where selection started
+	selectEnd     int    // Line where selection currently ends
+	previewLines  []string // Content split by lines for selection/copy
+	scrollDir     int    // -1 for up, 0 for none, 1 for down (for continuous scroll)
 }
+
+// Message for continuous scroll tick
+type scrollTickMsg struct{}
 
 type searchResult struct {
 	path         string
