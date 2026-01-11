@@ -146,6 +146,9 @@ func initialModel(rootPath string) model {
 			}
 			return nil
 		})
+		// Explicitly watch .context-groups.md for auto-reload
+		contextGroupsPath := filepath.Join(absPath, ".context-groups.md")
+		watcher.Add(contextGroupsPath)
 	}
 
 	return model{
@@ -484,6 +487,17 @@ func (m model) waitForFsEvent() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// Handle filesystem events first (before mode checks) so context groups auto-reload
+	if _, ok := msg.(fsEventMsg); ok {
+		m.entries = loadDirectory(m.rootPath, 0)
+		m.allFiles = collectAllFiles(m.rootPath)
+		m.layers, m.layerGroups, m.contextGroups, m.fileToGroups = loadContextGroups(m.rootPath)
+		if m.ready {
+			m.tree.SetContent(m.renderTree())
+		}
+		return m, m.waitForFsEvent()
+	}
+
 	// Handle search mode separately
 	if m.searching {
 		return m.updateSearch(msg)
@@ -495,18 +509,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case fsEventMsg:
-		// Reload everything on filesystem change
-		m.entries = loadDirectory(m.rootPath, 0)
-		m.allFiles = collectAllFiles(m.rootPath)
-		m.layers, m.layerGroups, m.contextGroups, m.fileToGroups = loadContextGroups(m.rootPath)
-		// Refresh tree content
-		if m.ready {
-			m.tree.SetContent(m.renderTree())
-		}
-		// Continue watching for next event
-		return m, m.waitForFsEvent()
-
 	case fileLoadedMsg:
 		// Only update if this is still the file we're waiting for
 		if msg.path == m.previewPath {
