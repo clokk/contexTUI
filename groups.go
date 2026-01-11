@@ -281,15 +281,15 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showingGroups = false
 			}
 		} else if msg.Button == tea.MouseButtonWheelUp {
-			// Scroll view up (don't move selection)
-			m.groupsScrollOffset -= 3
+			// Scroll view up (1 line for smoother trackpad scrolling)
+			m.groupsScrollOffset--
 			if m.groupsScrollOffset < 0 {
 				m.groupsScrollOffset = 0
 			}
 			return m, nil
 		} else if msg.Button == tea.MouseButtonWheelDown {
-			// Scroll view down (don't move selection)
-			m.groupsScrollOffset += 3
+			// Scroll view down (1 line for smoother trackpad scrolling)
+			m.groupsScrollOffset++
 			// Clamp to max scroll
 			maxContentHeight := m.height - 16
 			if maxContentHeight < 8 {
