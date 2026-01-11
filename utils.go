@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,11 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/sahilm/fuzzy"
+)
+
+const (
+	maxPreviewSize  = 512 * 1024 // 512KB - files larger than this are truncated
+	maxPreviewLines = 2000       // Max lines to show for large files
 )
 
 func (m model) updatePreview() (model, tea.Cmd) {
@@ -27,6 +33,19 @@ func (m model) updatePreview() (model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Check cache first
+	if cached, ok := m.previewCache[e.path]; ok {
+		info, err := os.Stat(e.path)
+		if err == nil && info.ModTime().Equal(cached.modTime) {
+			// Cache hit - use cached content
+			m.preview.SetContent(cached.content)
+			m.previewPath = e.path
+			m.loading = false
+			m.preview.GotoTop()
+			return m, nil
+		}
+	}
+
 	// Set loading state and trigger async load
 	m.loading = true
 	m.previewPath = e.path
@@ -35,28 +54,86 @@ func (m model) updatePreview() (model, tea.Cmd) {
 	// Return command that loads file content
 	previewWidth := m.preview.Width
 	fileName := e.name
+	filePath := e.path
 	return m, func() tea.Msg {
-		content, err := os.ReadFile(e.path)
+		// Get file info for cache validation and size check
+		info, err := os.Stat(filePath)
 		if err != nil {
-			return fileLoadedMsg{path: e.path, content: "Error: " + err.Error()}
+			return fileLoadedMsg{path: filePath, content: "Error: " + err.Error()}
+		}
+		modTime := info.ModTime()
+
+		var content []byte
+		var truncated bool
+
+		// Check file size and truncate if needed
+		if info.Size() > maxPreviewSize {
+			truncated = true
+			// Read only first portion of large files
+			f, err := os.Open(filePath)
+			if err != nil {
+				return fileLoadedMsg{path: filePath, content: "Error: " + err.Error()}
+			}
+			defer f.Close()
+			content = make([]byte, maxPreviewSize)
+			n, _ := f.Read(content)
+			content = content[:n]
+		} else {
+			content, err = os.ReadFile(filePath)
+			if err != nil {
+				return fileLoadedMsg{path: filePath, content: "Error: " + err.Error()}
+			}
+		}
+
+		// For large content, limit by lines
+		text := string(content)
+		if truncated || len(strings.Split(text, "\n")) > maxPreviewLines {
+			lines := strings.Split(text, "\n")
+			if len(lines) > maxPreviewLines {
+				lines = lines[:maxPreviewLines]
+				truncated = true
+			}
+			text = strings.Join(lines, "\n")
+		}
+
+		// Add truncation notice
+		if truncated {
+			text = fmt.Sprintf("--- File truncated (showing first %d lines of %s) ---\n\n%s",
+				maxPreviewLines, humanSize(info.Size()), text)
 		}
 
 		// Render markdown files with glamour
 		if strings.HasSuffix(fileName, ".md") {
-			renderer, _ := glamour.NewTermRenderer(
+			renderer, err := glamour.NewTermRenderer(
 				glamour.WithAutoStyle(),
 				glamour.WithWordWrap(previewWidth),
 			)
-			rendered, err := renderer.Render(string(content))
 			if err == nil {
-				return fileLoadedMsg{path: e.path, content: rendered}
+				rendered, err := renderer.Render(text)
+				if err == nil {
+					return fileLoadedMsg{path: filePath, content: rendered, modTime: modTime}
+				}
 			}
 		}
 
 		// Syntax highlight code files with chroma
-		highlighted := highlightCode(string(content), fileName, previewWidth)
-		return fileLoadedMsg{path: e.path, content: highlighted}
+		highlighted := highlightCode(text, fileName, previewWidth)
+		return fileLoadedMsg{path: filePath, content: highlighted, modTime: modTime}
 	}
+}
+
+// humanSize formats bytes into a human-readable size string
+func humanSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 // highlightCode uses chroma to syntax highlight code based on filename

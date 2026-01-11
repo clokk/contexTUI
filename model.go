@@ -57,6 +57,7 @@ func initialModel(rootPath string) model {
 		cursor:        0,
 		activePane:    treePane,
 		splitRatio:    0.5, // Start with equal split
+		previewCache:  make(map[string]cachedPreview),
 		searchInput:   ti,
 		allFiles:      allFiles,
 		layers:        layers,
@@ -192,6 +193,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = false
 			m.preview.SetContent(msg.content)
 			m.preview.GotoTop()
+			// Cache the rendered content
+			if !msg.modTime.IsZero() {
+				m.previewCache[msg.path] = cachedPreview{
+					content: msg.content,
+					modTime: msg.modTime,
+				}
+			}
 		}
 		return m, nil
 
@@ -260,12 +268,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					now.Sub(m.lastClickTime) < 400*time.Millisecond
 
 				if isDoubleClick {
-					// Double-click: toggle directory or just select file
+					// Double-click: toggle directory or refresh file preview
 					e := flat[clickedIndex]
 					if e.isDir {
 						m.cursor = clickedIndex
 						m = m.toggleExpand(e.path)
 						m.tree.SetContent(m.renderTree())
+					} else {
+						// For files, ensure preview is triggered
+						m.cursor = clickedIndex
+						var cmd tea.Cmd
+						m, cmd = m.updatePreview()
+						cmds = append(cmds, cmd)
 					}
 					m.lastClickTime = time.Time{} // Reset to prevent triple-click
 				} else {
@@ -335,6 +349,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if e.isDir {
 						m = m.toggleExpand(e.path)
 						m.tree.SetContent(m.renderTree())
+					} else {
+						// Trigger preview for files
+						var cmd tea.Cmd
+						m, cmd = m.updatePreview()
+						cmds = append(cmds, cmd)
 					}
 				}
 			}

@@ -41,6 +41,7 @@ type model struct {
 	preview        viewport.Model
 	previewContent string
 	previewPath    string
+	previewCache   map[string]cachedPreview // filepath -> cached rendered content
 	loading        bool
 	width          int
 	height         int
@@ -83,6 +84,13 @@ type searchResult struct {
 type fileLoadedMsg struct {
 	path    string
 	content string
+	modTime time.Time // For cache validation
+}
+
+// cachedPreview stores rendered preview content with modification time
+type cachedPreview struct {
+	content string
+	modTime time.Time
 }
 
 // Message sent when filesystem changes
