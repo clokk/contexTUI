@@ -64,6 +64,10 @@ Files for the my-feature system.
 
 Press `g` to open groups, navigate with `h/l/j/k`, press `c` to copy all files.
 
+## Environment
+
+- `NO_COLOR` - Set to disable colors ([no-color.org](https://no-color.org/))
+
 ## License
 
 MIT
