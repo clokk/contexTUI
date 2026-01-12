@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -105,10 +106,24 @@ type model struct {
 
 	// Help overlay
 	showingHelp bool // True when help overlay is visible
+
+	// Status message (transient feedback)
+	statusMessage     string
+	statusMessageTime time.Time
 }
 
 // Message for continuous scroll tick
 type scrollTickMsg struct{}
+
+// Message to clear status message after delay
+type clearStatusMsg struct{}
+
+// clearStatusAfter returns a command that clears the status message after a delay
+func clearStatusAfter(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
+		return clearStatusMsg{}
+	})
+}
 
 type searchResult struct {
 	path         string

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -277,8 +279,14 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Copy the selected group to clipboard
 			selectedGroup := m.getSelectedGroup()
 			if selectedGroup != nil {
-				copyGroupToClipboard(m.rootPath, *selectedGroup)
+				if err := copyGroupToClipboard(m.rootPath, *selectedGroup); err != nil {
+					m.statusMessage = "Clipboard unavailable"
+				} else {
+					m.statusMessage = fmt.Sprintf("Copied %d files!", len(selectedGroup.Files))
+				}
+				m.statusMessageTime = time.Now()
 				m.showingGroups = false
+				return m, clearStatusAfter(3 * time.Second)
 			}
 			return m, nil
 		}
@@ -288,8 +296,14 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Check if click is on a group line and copy it
 			clickedGroup := m.getGroupAtClick(msg.X, msg.Y)
 			if clickedGroup != nil {
-				copyGroupToClipboard(m.rootPath, *clickedGroup)
+				if err := copyGroupToClipboard(m.rootPath, *clickedGroup); err != nil {
+					m.statusMessage = "Clipboard unavailable"
+				} else {
+					m.statusMessage = fmt.Sprintf("Copied %d files!", len(clickedGroup.Files))
+				}
+				m.statusMessageTime = time.Now()
 				m.showingGroups = false
+				return m, clearStatusAfter(3 * time.Second)
 			}
 		} else if msg.Button == tea.MouseButtonWheelUp {
 			// Scroll view up (1 line for smoother trackpad scrolling)

@@ -232,6 +232,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle status message clear
+	if _, ok := msg.(clearStatusMsg); ok {
+		m.statusMessage = ""
+		return m, nil
+	}
+
 	// Handle help toggle (works from any mode)
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "?" {
 		m.showingHelp = !m.showingHelp
@@ -468,7 +474,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(flat) {
 				e := flat[m.cursor]
 				if !e.isDir {
-					copyToClipboard(e.path)
+					if err := copyToClipboard(e.path); err != nil {
+						m.statusMessage = "Clipboard unavailable"
+					} else {
+						m.statusMessage = "Copied!"
+					}
+					m.statusMessageTime = time.Now()
+					return m, clearStatusAfter(3 * time.Second)
 				}
 			}
 

@@ -4,6 +4,20 @@ A context-aware terminal file browser for AI-assisted development.
 
 > See [VISION.md](VISION.md) for the philosophy behind this tool.
 
+## Prerequisites
+
+- [Go](https://go.dev/dl/) 1.21 or later
+
+## Supported Platforms
+
+| Platform | Clipboard Support |
+|----------|-------------------|
+| macOS | Native (pbcopy) |
+| Linux X11 | Requires `xclip` or `xsel` |
+| Linux Wayland | Requires `wl-clipboard` |
+| Windows | Native |
+| WSL | Native (via clip.exe) |
+
 ## Installation
 
 ```bash

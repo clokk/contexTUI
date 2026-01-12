@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -94,6 +95,12 @@ func (m model) View() string {
 
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tree, preview)
 		footer = m.renderBranchStatus() + footerStyle.Render("/ search  g groups  s git  q quit  ? help")
+	}
+
+	// Prepend status message to footer if present and recent
+	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 3*time.Second {
+		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("118")).Bold(true)
+		footer = statusStyle.Render(m.statusMessage) + "  " + footer
 	}
 
 	mainView := header + "\n" + body + "\n" + footer

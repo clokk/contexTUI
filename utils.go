@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/sahilm/fuzzy"
 )
@@ -337,29 +334,6 @@ func (m model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func copyToClipboard(path string) {
-	// Use @filepath format for Claude Code context
-	formatted := "@" + path
-
-	// Use pbcopy on macOS
-	cmd := exec.Command("pbcopy")
-	cmd.Stdin = strings.NewReader(formatted)
-	cmd.Run()
-}
-
-func copyGroupToClipboard(rootPath string, group ContextGroup) {
-	var refs []string
-	for _, relPath := range group.Files {
-		fullPath := filepath.Join(rootPath, relPath)
-		refs = append(refs, "@"+fullPath)
-	}
-
-	// Use pbcopy on macOS
-	cmd := exec.Command("pbcopy")
-	cmd.Stdin = strings.NewReader(strings.Join(refs, " "))
-	cmd.Run()
-}
-
 // scrollTick returns a command that sends a scroll tick after a delay
 func scrollTick() tea.Cmd {
 	return tea.Tick(50*time.Millisecond, func(t time.Time) tea.Msg {
@@ -411,7 +385,13 @@ func (m model) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "y", "c", "ctrl+c":
 			// Copy selection (ctrl+c works in copy mode instead of quit)
 			if m.selectStart >= 0 && m.selectEnd >= 0 {
-				m.copySelection()
+				if err := m.copySelection(); err != nil {
+					m.statusMessage = "Clipboard unavailable"
+				} else {
+					m.statusMessage = "Copied selection!"
+				}
+				m.statusMessageTime = time.Now()
+				return m, clearStatusAfter(3 * time.Second)
 			}
 			return m, nil
 
@@ -507,38 +487,3 @@ func stripLineNumbers(line string) string {
 	return line
 }
 
-// copySelection copies the selected lines to clipboard
-func (m model) copySelection() {
-	if len(m.previewLines) == 0 || m.selectStart < 0 || m.selectEnd < 0 {
-		return
-	}
-
-	start, end := m.selectStart, m.selectEnd
-	if start > end {
-		start, end = end, start
-	}
-
-	// Clamp to valid range
-	if start < 0 {
-		start = 0
-	}
-	if end >= len(m.previewLines) {
-		end = len(m.previewLines) - 1
-	}
-
-	// Extract selected lines, stripping ANSI codes and line numbers
-	var cleanLines []string
-	for i := start; i <= end; i++ {
-		line := m.previewLines[i]
-		// Strip ANSI codes first
-		clean := ansi.Strip(line)
-		// Strip line number prefix
-		clean = stripLineNumbers(clean)
-		cleanLines = append(cleanLines, clean)
-	}
-
-	// Copy to clipboard
-	cmd := exec.Command("pbcopy")
-	cmd.Stdin = strings.NewReader(strings.Join(cleanLines, "\n"))
-	cmd.Run()
-}

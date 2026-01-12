@@ -216,7 +216,13 @@ func (m model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.gitStatusCursor < len(m.gitChanges) {
 				change := m.gitChanges[m.gitStatusCursor]
 				fullPath := filepath.Join(m.gitRepoRoot, change.Path)
-				copyToClipboard(fullPath)
+				if err := copyToClipboard(fullPath); err != nil {
+					m.statusMessage = "Clipboard unavailable"
+				} else {
+					m.statusMessage = "Copied!"
+				}
+				m.statusMessageTime = time.Now()
+				return m, clearStatusAfter(3 * time.Second)
 			}
 			return m, nil
 
