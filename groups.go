@@ -183,9 +183,10 @@ This file is used by contexTUI to provide quick context loading for Claude and o
 
 ` + "```markdown" + `
 ## group-name
-layer: <layer-id>        # Which architectural layer (ui, feature, data, integration)
+layer: <layer-id>        # Which architectural layer (docs, ui, feature, data, integration)
 parent: <parent-group>   # Optional: nest under another group
 tags: [tag1, tag2]       # Optional: cross-cutting concerns
+contains: [child1]       # Optional: list of child groups (for readability)
 
 Description of what this group contains and when to use it.
 
@@ -199,19 +200,30 @@ Description of what this group contains and when to use it.
 - Files show ` + "`[group-name]`" + ` badges in the tree view
 - Press ` + "`g`" + ` to open the swimlane view (groups organized by layer)
 - Navigate: ` + "`h/l`" + ` switch layers, ` + "`j/k`" + ` switch groups
-- Press ` + "`enter`" + ` or ` + "`c`" + ` to copy all files as @filepath references
+- Press ` + "`enter`" + ` or ` + "`c`" + ` to copy all files as ` + "`@filepath`" + ` references
 
 **For AI Agents:**
-When working on a feature, copy the relevant context group to provide Claude with
-the necessary file context. Groups are designed to be self-contained units of
-related functionality.
+When asked to work on a feature, look for a relevant context group here. Groups are
+self-contained units of related functionality. Copy the group to load all necessary
+context at once, rather than searching for files individually.
 
-**Git:** This file should be committed to your repository so team members share
-the same context group definitions.
+**Creating Groups:**
+Create a group when you have files that are frequently used together. Good candidates:
+- Feature implementations spanning multiple files
+- Related files across different directories
+- Context you'd copy-paste to Claude regularly
+
+**Design Principle:**
+Text lives in files, not inline. If you need to add instructions or notes, create a
+markdown file and include it in the group. This keeps groups composable - the same
+file can be referenced by multiple groups.
+
+**Git:** Commit this file so team members share the same context group definitions.
 
 ---
 
 layers:
+  - docs: Documentation
   - ui: UI Layer
   - feature: Feature Layer
   - data: Data Layer
@@ -223,8 +235,7 @@ layers:
 layer: feature
 tags: [starter]
 
-This is an example context group. Replace this with your own groups.
-Add files that are commonly edited together or provide context for a feature.
+Example context group. Replace with your own groups based on your codebase structure.
 
 - README.md
 `
