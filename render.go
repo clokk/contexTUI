@@ -93,7 +93,7 @@ func (m model) View() string {
 		preview := previewStyle.Render(m.preview.View())
 
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tree, preview)
-		footer = m.renderBranchStatus() + footerStyle.Render("/ search  s git  q quit  ? help")
+		footer = m.renderBranchStatus() + footerStyle.Render("/ search  g groups  s git  q quit  ? help")
 	}
 
 	mainView := header + "\n" + body + "\n" + footer
