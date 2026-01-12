@@ -66,7 +66,11 @@ Press `g` to open groups, navigate with `h/l/j/k`, press `c` to copy all files.
 
 ## Environment
 
-- `NO_COLOR` - Set to disable colors ([no-color.org](https://no-color.org/))
+```bash
+NO_COLOR=1 contexTUI  # Disable colors
+```
+
+Respects the [NO_COLOR](https://no-color.org/) standard.
 
 ## License
 
