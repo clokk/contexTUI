@@ -52,6 +52,11 @@ func (m model) View() string {
 			footer = selectStyle.Render(" COPY MODE ") +
 				footerStyle.Render("drag to select  [c/ctrl+c] copy  [j/k] scroll  [v/esc] exit")
 		}
+	} else if m.gitStatusMode {
+		// Git status view - show changed files list and preview
+		body = m.renderGitStatusView(paneHeight)
+		gitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("118")).Bold(true)
+		footer = m.renderBranchStatus() + gitStyle.Render("GIT") + footerStyle.Render("  / search  f fetch  esc close  ? help")
 	} else {
 		// Normal mode - show both panes
 		leftWidth := m.leftPaneWidth()
@@ -88,10 +93,15 @@ func (m model) View() string {
 		preview := previewStyle.Render(m.preview.View())
 
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tree, preview)
-		footer = footerStyle.Render(" [tab] switch  [j/k] nav  [←/→] resize  [c] copy path  [/] search  [g] groups  [v] copy mode  [q] quit")
+		footer = m.renderBranchStatus() + footerStyle.Render("/ search  s git  q quit  ? help")
 	}
 
 	mainView := header + "\n" + body + "\n" + footer
+
+	// Overlay help if active
+	if m.showingHelp {
+		return m.renderHelpOverlay(mainView)
+	}
 
 	// Overlay search if active
 	if m.searching {
@@ -224,9 +234,22 @@ func (m model) renderTree() string {
 	var b strings.Builder
 	flat := m.flatEntries()
 
+	// Context group badge style
 	badgeStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("205")).
 		Faint(true)
+
+	// Git status styles
+	gitStyles := map[string]lipgloss.Style{
+		"M": lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true), // Yellow - modified
+		"A": lipgloss.NewStyle().Foreground(lipgloss.Color("118")).Bold(true), // Green - added
+		"D": lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true), // Red - deleted
+		"R": lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true),  // Blue - renamed
+		"?": lipgloss.NewStyle().Foreground(lipgloss.Color("244")),            // Gray - untracked
+		"U": lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true), // Red - conflict
+		"!": lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true), // Red - conflict
+	}
+	dirIndicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
 	for i, e := range flat {
 		indent := strings.Repeat("  ", e.depth)
@@ -241,10 +264,27 @@ func (m model) renderTree() string {
 		}
 
 		line := indent + icon + e.name
+		relPath, _ := filepath.Rel(m.rootPath, e.path)
 
-		// Add group badges for files
+		// Add git status badge
+		if m.isGitRepo {
+			if e.isDir {
+				// Directory indicator - show dot if contains changes
+				if _, ok := m.gitDirStatus[relPath]; ok {
+					line += " " + dirIndicatorStyle.Render("●")
+				}
+			} else {
+				// File status badge
+				if status, ok := m.gitStatus[relPath]; ok {
+					if style, ok := gitStyles[status.Status]; ok {
+						line += " " + style.Render(status.Status)
+					}
+				}
+			}
+		}
+
+		// Add context group badges for files
 		if !e.isDir {
-			relPath, _ := filepath.Rel(m.rootPath, e.path)
 			if groups, ok := m.fileToGroups[relPath]; ok {
 				for _, g := range groups {
 					line += " " + badgeStyle.Render("["+g+"]")
@@ -477,5 +517,97 @@ func (m model) renderGroupsOverlay(background string) string {
 		m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
 		groupsBox,
+	)
+}
+
+// renderBranchStatus returns the git branch name with ahead/behind indicators
+func (m model) renderBranchStatus() string {
+	if !m.isGitRepo || m.gitBranch == "" {
+		return ""
+	}
+
+	branchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
+	indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	var status string
+	if m.gitFetching {
+		status = branchStyle.Render(m.gitBranch) + indicatorStyle.Render(" ⟳")
+	} else if !m.gitHasUpstream {
+		status = branchStyle.Render(m.gitBranch)
+	} else if m.gitAhead == 0 && m.gitBehind == 0 {
+		status = branchStyle.Render(m.gitBranch) + indicatorStyle.Render(" ✓")
+	} else {
+		status = branchStyle.Render(m.gitBranch)
+		if m.gitAhead > 0 {
+			status += indicatorStyle.Render(fmt.Sprintf(" ↑%d", m.gitAhead))
+		}
+		if m.gitBehind > 0 {
+			status += indicatorStyle.Render(fmt.Sprintf(" ↓%d", m.gitBehind))
+		}
+	}
+
+	return status + "  "
+}
+
+// renderHelpOverlay renders the help overlay with all keybindings
+func (m model) renderHelpOverlay(background string) string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	descStyle := lipgloss.NewStyle().Faint(true)
+
+	var content strings.Builder
+
+	content.WriteString(titleStyle.Render("Keyboard Shortcuts"))
+	content.WriteString("\n\n")
+
+	// Navigation
+	content.WriteString(sectionStyle.Render("Navigation"))
+	content.WriteString("\n")
+	content.WriteString(fmt.Sprintf("  %s  %s\n", keyStyle.Render("j/k ↑/↓"), descStyle.Render("Move cursor")))
+	content.WriteString(fmt.Sprintf("  %s      %s\n", keyStyle.Render("tab"), descStyle.Render("Switch panes")))
+	content.WriteString(fmt.Sprintf("  %s  %s\n", keyStyle.Render("enter/l"), descStyle.Render("Open/expand")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("h"), descStyle.Render("Collapse")))
+	content.WriteString("\n")
+
+	// Views
+	content.WriteString(sectionStyle.Render("Views"))
+	content.WriteString("\n")
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("s"), descStyle.Render("Git status")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("g"), descStyle.Render("Context groups")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("/"), descStyle.Render("Search files")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("v"), descStyle.Render("Copy mode")))
+	content.WriteString("\n")
+
+	// Actions
+	content.WriteString(sectionStyle.Render("Actions"))
+	content.WriteString("\n")
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("c"), descStyle.Render("Copy file path")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("f"), descStyle.Render("Git fetch")))
+	content.WriteString(fmt.Sprintf("  %s      %s\n", keyStyle.Render("←/→"), descStyle.Render("Resize panes")))
+	content.WriteString("\n")
+
+	// General
+	content.WriteString(sectionStyle.Render("General"))
+	content.WriteString("\n")
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("?"), descStyle.Render("Toggle help")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("q"), descStyle.Render("Quit")))
+	content.WriteString("\n")
+
+	content.WriteString(descStyle.Render("Press any key to close"))
+
+	// Style the help box
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Padding(1, 3)
+
+	helpBox := boxStyle.Render(content.String())
+
+	// Center the box
+	return lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		helpBox,
 	)
 }

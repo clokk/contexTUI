@@ -60,70 +60,76 @@ func (m model) updatePreview() (model, tea.Cmd) {
 	fileName := e.name
 	filePath := e.path
 	return m, func() tea.Msg {
-		// Get file info for cache validation and size check
-		info, err := os.Stat(filePath)
+		return loadFileContent(filePath, fileName, previewWidth)
+	}
+}
+
+// loadFileContent loads and processes file content for preview
+// This is extracted to be reusable by both updatePreview and git status view
+func loadFileContent(filePath, fileName string, previewWidth int) fileLoadedMsg {
+	// Get file info for cache validation and size check
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fileLoadedMsg{path: filePath, content: "Error: " + err.Error()}
+	}
+	modTime := info.ModTime()
+
+	var content []byte
+	var truncated bool
+
+	// Check file size and truncate if needed
+	if info.Size() > maxPreviewSize {
+		truncated = true
+		// Read only first portion of large files
+		f, err := os.Open(filePath)
 		if err != nil {
 			return fileLoadedMsg{path: filePath, content: "Error: " + err.Error()}
 		}
-		modTime := info.ModTime()
-
-		var content []byte
-		var truncated bool
-
-		// Check file size and truncate if needed
-		if info.Size() > maxPreviewSize {
-			truncated = true
-			// Read only first portion of large files
-			f, err := os.Open(filePath)
-			if err != nil {
-				return fileLoadedMsg{path: filePath, content: "Error: " + err.Error()}
-			}
-			defer f.Close()
-			content = make([]byte, maxPreviewSize)
-			n, _ := f.Read(content)
-			content = content[:n]
-		} else {
-			content, err = os.ReadFile(filePath)
-			if err != nil {
-				return fileLoadedMsg{path: filePath, content: "Error: " + err.Error()}
-			}
+		defer f.Close()
+		content = make([]byte, maxPreviewSize)
+		n, _ := f.Read(content)
+		content = content[:n]
+	} else {
+		content, err = os.ReadFile(filePath)
+		if err != nil {
+			return fileLoadedMsg{path: filePath, content: "Error: " + err.Error()}
 		}
-
-		// For large content, limit by lines
-		text := string(content)
-		if truncated || len(strings.Split(text, "\n")) > maxPreviewLines {
-			lines := strings.Split(text, "\n")
-			if len(lines) > maxPreviewLines {
-				lines = lines[:maxPreviewLines]
-				truncated = true
-			}
-			text = strings.Join(lines, "\n")
-		}
-
-		// Add truncation notice
-		if truncated {
-			text = fmt.Sprintf("--- File truncated (showing first %d lines of %s) ---\n\n%s",
-				maxPreviewLines, humanSize(info.Size()), text)
-		}
-
-		// Render markdown files with glamour
-		if strings.HasSuffix(fileName, ".md") {
-			renderer, err := glamour.NewTermRenderer(
-				glamour.WithAutoStyle(),
-				glamour.WithWordWrap(previewWidth),
-			)
-			if err == nil {
-				rendered, err := renderer.Render(text)
-				if err == nil {
-					return fileLoadedMsg{path: filePath, content: rendered, modTime: modTime}
-				}
-			}
-		}
-
-		// Syntax highlight code files with chroma
-		highlighted := highlightCode(text, fileName, previewWidth)
-		return fileLoadedMsg{path: filePath, content: highlighted, modTime: modTime}
 	}
+
+	// For large content, limit by lines
+	text := string(content)
+	if truncated || len(strings.Split(text, "\n")) > maxPreviewLines {
+		lines := strings.Split(text, "\n")
+		if len(lines) > maxPreviewLines {
+			lines = lines[:maxPreviewLines]
+			truncated = true
+		}
+		text = strings.Join(lines, "\n")
+	}
+
+	// Add truncation notice
+	if truncated {
+		text = fmt.Sprintf("--- File truncated (showing first %d lines of %s) ---\n\n%s",
+			maxPreviewLines, humanSize(info.Size()), text)
+	}
+
+	// Render markdown files with glamour
+	if strings.HasSuffix(fileName, ".md") {
+		renderer, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(previewWidth),
+		)
+		if err == nil {
+			rendered, err := renderer.Render(text)
+			if err == nil {
+				return fileLoadedMsg{path: filePath, content: rendered, modTime: modTime}
+			}
+		}
+	}
+
+	// Syntax highlight code files with chroma
+	highlighted := highlightCode(text, fileName, previewWidth)
+	return fileLoadedMsg{path: filePath, content: highlighted, modTime: modTime}
 }
 
 // addLineNumbers prepends line numbers to each line of content
@@ -201,6 +207,49 @@ func highlightCode(code, filename string, maxWidth int) string {
 
 	// Word wrap highlighted output and add line numbers
 	wrapped := wrapLines(buf.String(), maxWidth-gutterTotal)
+	return addLineNumbers(wrapped)
+}
+
+// highlightDiff applies syntax highlighting to git diff output
+func highlightDiff(diffText string, maxWidth int) string {
+	lines := strings.Split(diffText, "\n")
+
+	// Calculate gutter width
+	gutterWidth := len(fmt.Sprintf("%d", len(lines)))
+	if gutterWidth < 4 {
+		gutterWidth = 4
+	}
+	gutterTotal := gutterWidth + 3
+
+	// Style definitions for diff output
+	addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("118"))    // Green
+	removeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
+	hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("81"))    // Cyan
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // Yellow
+
+	var result strings.Builder
+	for i, line := range lines {
+		var styled string
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			styled = headerStyle.Render(line)
+		case strings.HasPrefix(line, "@@"):
+			styled = hunkStyle.Render(line)
+		case strings.HasPrefix(line, "+"):
+			styled = addStyle.Render(line)
+		case strings.HasPrefix(line, "-"):
+			styled = removeStyle.Render(line)
+		default:
+			styled = line
+		}
+		result.WriteString(styled)
+		if i < len(lines)-1 {
+			result.WriteString("\n")
+		}
+	}
+
+	// Wrap and add line numbers
+	wrapped := wrapLines(result.String(), maxWidth-gutterTotal)
 	return addLineNumbers(wrapped)
 }
 

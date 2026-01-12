@@ -38,6 +38,21 @@ func initialModel(rootPath string) model {
 	// Load context groups
 	layers, layerGroups, groups, fileToGroups := loadContextGroups(absPath)
 
+	// Check for git repository and load git status
+	isGit, gitRoot := isGitRepo(absPath)
+	var gitStatus map[string]GitFileStatus
+	var gitDirStatus map[string]string
+	var gitChanges []GitFileStatus
+	var gitBranch string
+	var gitAhead, gitBehind int
+	var gitHasUpstream bool
+	if isGit {
+		gitStatus, gitChanges = loadGitStatus(gitRoot)
+		gitDirStatus = computeDirStatus(gitStatus)
+		gitBranch = getGitBranch(gitRoot)
+		gitAhead, gitBehind, gitHasUpstream = getAheadBehind(gitRoot)
+	}
+
 	// Set up file watcher
 	watcher, _ := fsnotify.NewWatcher()
 	if watcher != nil {
@@ -75,6 +90,16 @@ func initialModel(rootPath string) model {
 		contextGroups: groups,
 		fileToGroups:  fileToGroups,
 		watcher:       watcher,
+		// Git integration
+		isGitRepo:      isGit,
+		gitRepoRoot:    gitRoot,
+		gitStatus:      gitStatus,
+		gitDirStatus:   gitDirStatus,
+		gitChanges:     gitChanges,
+		gitBranch:      gitBranch,
+		gitAhead:       gitAhead,
+		gitBehind:      gitBehind,
+		gitHasUpstream: gitHasUpstream,
 	}
 }
 
@@ -180,10 +205,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.entries = loadDirectory(m.rootPath, 0)
 		m.allFiles = collectAllFiles(m.rootPath)
 		m.layers, m.layerGroups, m.contextGroups, m.fileToGroups = loadContextGroups(m.rootPath)
+		// Refresh git status
+		if m.isGitRepo {
+			m.gitStatus, m.gitChanges = loadGitStatus(m.gitRepoRoot)
+			m.gitDirStatus = computeDirStatus(m.gitStatus)
+		}
 		if m.ready {
 			m.tree.SetContent(m.renderTree())
 		}
 		return m, m.waitForFsEvent()
+	}
+
+	// Handle git fetch completion
+	if fetchMsg, ok := msg.(gitFetchDoneMsg); ok {
+		m.gitFetching = false
+		if fetchMsg.err == nil && m.isGitRepo {
+			// Refresh branch info after fetch
+			m.gitAhead, m.gitBehind, m.gitHasUpstream = getAheadBehind(m.gitRepoRoot)
+			// Also refresh git status
+			m.gitStatus, m.gitChanges = loadGitStatus(m.gitRepoRoot)
+			m.gitDirStatus = computeDirStatus(m.gitStatus)
+			if m.ready {
+				m.tree.SetContent(m.renderTree())
+			}
+		}
+		return m, nil
+	}
+
+	// Handle help toggle (works from any mode)
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "?" {
+		m.showingHelp = !m.showingHelp
+		return m, nil
+	}
+
+	// Handle help overlay - just close on any key
+	if m.showingHelp {
+		if _, ok := msg.(tea.KeyMsg); ok {
+			m.showingHelp = false
+		}
+		return m, nil
 	}
 
 	// Handle search mode separately
@@ -199,6 +259,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle visual selection mode
 	if m.selectMode {
 		return m.updateSelect(msg)
+	}
+
+	// Handle git status view mode
+	if m.gitStatusMode {
+		return m.updateGitStatus(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -391,23 +456,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "right":
 			// Resize: right arrow increases tree pane
-			if m.splitRatio < 0.8 {
-				m.splitRatio += 0.05
-				m.tree.Width = m.leftPaneWidth() - 2
-				m.preview.Width = m.rightPaneWidth() - 2
-				m.tree.SetContent(m.renderTree())
-				saveConfig(m.rootPath, Config{SplitRatio: m.splitRatio})
-			}
+			m.handlePaneResize("right")
 
 		case "left":
 			// Resize: left arrow decreases tree pane (increases preview)
-			if m.splitRatio > 0.2 {
-				m.splitRatio -= 0.05
-				m.tree.Width = m.leftPaneWidth() - 2
-				m.preview.Width = m.rightPaneWidth() - 2
-				m.tree.SetContent(m.renderTree())
-				saveConfig(m.rootPath, Config{SplitRatio: m.splitRatio})
-			}
+			m.handlePaneResize("left")
 
 		case "c":
 			// Copy selected file to clipboard
@@ -447,6 +500,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isSelecting = false
 			} else {
 				m.selectMode = false
+			}
+			return m, nil
+
+		case "s":
+			// Toggle git status view
+			if m.isGitRepo {
+				if !m.gitStatusMode {
+					m.gitStatusMode = true
+					m.gitStatusCursor = 0
+					// Refresh git status when entering
+					m.gitStatus, m.gitChanges = loadGitStatus(m.gitRepoRoot)
+					m.gitDirStatus = computeDirStatus(m.gitStatus)
+					// Load preview for first item if there are changes
+					if len(m.gitChanges) > 0 {
+						var cmd tea.Cmd
+						m, cmd = m.updateGitStatusPreview()
+						return m, cmd
+					}
+				} else {
+					m.gitStatusMode = false
+				}
+			}
+			return m, nil
+
+		case "f":
+			// Git fetch
+			if m.isGitRepo && !m.gitFetching {
+				m.gitFetching = true
+				repoRoot := m.gitRepoRoot
+				return m, func() tea.Msg {
+					err := gitFetch(repoRoot)
+					return gitFetchDoneMsg{err: err}
+				}
 			}
 			return m, nil
 		}
@@ -498,6 +584,44 @@ func (m model) rightPaneWidth() int {
 // dividerX returns the X position of the divider between panes
 func (m model) dividerX() int {
 	return m.leftPaneWidth() + 2 // +2 for left pane border
+}
+
+// handlePaneResize adjusts the split ratio between left and right panes
+// This is shared between normal mode and git status mode
+func (m *model) handlePaneResize(direction string) {
+	switch direction {
+	case "left":
+		if m.splitRatio > 0.2 {
+			m.splitRatio -= 0.05
+		}
+	case "right":
+		if m.splitRatio < 0.8 {
+			m.splitRatio += 0.05
+		}
+	}
+	m.tree.Width = m.leftPaneWidth() - 2
+	m.preview.Width = m.rightPaneWidth() - 2
+	m.tree.SetContent(m.renderTree())
+	saveConfig(m.rootPath, Config{SplitRatio: m.splitRatio})
+}
+
+// handlePreviewScroll scrolls the preview pane
+// This is shared between normal mode and git status mode
+func (m *model) handlePreviewScroll(direction string) {
+	switch direction {
+	case "up":
+		m.preview.LineUp(1)
+	case "down":
+		m.preview.LineDown(1)
+	case "half-up":
+		m.preview.HalfViewUp()
+	case "half-down":
+		m.preview.HalfViewDown()
+	case "top":
+		m.preview.GotoTop()
+	case "bottom":
+		m.preview.GotoBottom()
+	}
 }
 
 func flattenEntries(entries []entry) []entry {

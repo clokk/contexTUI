@@ -32,6 +32,14 @@ type ContextGroup struct {
 	Tags        []string // Cross-cutting concern tags
 }
 
+// GitFileStatus represents the status of a file in git
+type GitFileStatus struct {
+	Path    string // Relative path from repo root
+	Status  string // "M", "A", "D", "R", "?", "!", etc.
+	Staged  bool   // True if change is staged
+	OldPath string // For renames, the original path
+}
+
 type model struct {
 	rootPath       string
 	entries        []entry
@@ -74,12 +82,29 @@ type model struct {
 	watcher *fsnotify.Watcher
 
 	// Copy mode with custom selection
-	selectMode    bool
-	isSelecting   bool   // True while mouse is being dragged
-	selectStart   int    // Line where selection started
-	selectEnd     int    // Line where selection currently ends
-	previewLines  []string // Content split by lines for selection/copy
-	scrollDir     int    // -1 for up, 0 for none, 1 for down (for continuous scroll)
+	selectMode   bool
+	isSelecting  bool     // True while mouse is being dragged
+	selectStart  int      // Line where selection started
+	selectEnd    int      // Line where selection currently ends
+	previewLines []string // Content split by lines for selection/copy
+	scrollDir    int      // -1 for up, 0 for none, 1 for down (for continuous scroll)
+
+	// Git integration
+	isGitRepo       bool
+	gitRepoRoot     string                   // Git repo root (may differ from rootPath)
+	gitStatus       map[string]GitFileStatus // relPath -> status
+	gitDirStatus    map[string]string        // dir relPath -> aggregated status indicator
+	gitStatusMode   bool                     // True when showing git status view
+	gitStatusCursor int                      // Cursor in git status view
+	gitChanges      []GitFileStatus          // Flat list of all changes for git view
+	gitBranch       string                   // Current branch name
+	gitAhead        int                      // Commits ahead of upstream
+	gitBehind       int                      // Commits behind upstream
+	gitHasUpstream  bool                     // Whether branch has upstream configured
+	gitFetching     bool                     // True while fetch is in progress
+
+	// Help overlay
+	showingHelp bool // True when help overlay is visible
 }
 
 // Message for continuous scroll tick
@@ -109,6 +134,11 @@ type fsEventMsg struct{}
 
 // Message to continue watching after an event
 type watchNextMsg struct{}
+
+// Message sent when git fetch completes
+type gitFetchDoneMsg struct {
+	err error
+}
 
 type entry struct {
 	name     string
