@@ -92,6 +92,10 @@ type Model struct {
 	// Status message (transient feedback)
 	statusMessage     string
 	statusMessageTime time.Time
+
+	// Registry save state (for debounced background saves)
+	registryDirty  bool // Whether registry needs saving
+	registrySaving bool // Whether a save is in progress
 }
 
 // ScrollTickMsg is sent for continuous scroll tick
@@ -136,6 +140,21 @@ type WatchNextMsg struct{}
 // GitFetchDoneMsg is sent when git fetch completes
 type GitFetchDoneMsg struct {
 	Err error
+}
+
+// SaveRegistryMsg signals that the debounced save timer fired
+type SaveRegistryMsg struct{}
+
+// RegistrySavedMsg signals save completion
+type RegistrySavedMsg struct {
+	Err error
+}
+
+// ScheduleRegistrySave returns a command that fires after debounce delay
+func ScheduleRegistrySave(delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(t time.Time) tea.Msg {
+		return SaveRegistryMsg{}
+	})
 }
 
 // Entry represents a file or directory in the tree

@@ -54,6 +54,11 @@ func (m Model) updateDocs(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
+			// Save immediately if dirty before closing
+			if m.registryDirty && !m.registrySaving {
+				groups.SaveContextDocRegistry(m.rootPath, m.docRegistry)
+				m.registryDirty = false
+			}
 			m.showingDocs = false
 			return m, nil
 
@@ -101,11 +106,11 @@ func (m Model) updateDocs(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveDocInCategory(m.docCursor, m.docCursor-1)
 				m.docCursor--
 				m.ensureDocVisible()
-				// Save registry to persist order
-				if err := groups.SaveContextDocRegistry(m.rootPath, m.docRegistry); err == nil {
-					m.statusMessage = "Moved doc up"
-					m.statusMessageTime = time.Now()
-				}
+				m.registryDirty = true
+				m.statusMessage = "Moved doc up"
+				m.statusMessageTime = time.Now()
+				// Schedule debounced save (150ms delay)
+				return m, ScheduleRegistrySave(150 * time.Millisecond)
 			}
 			return m, nil
 
@@ -115,11 +120,11 @@ func (m Model) updateDocs(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveDocInCategory(m.docCursor, m.docCursor+1)
 				m.docCursor++
 				m.ensureDocVisible()
-				// Save registry to persist order
-				if err := groups.SaveContextDocRegistry(m.rootPath, m.docRegistry); err == nil {
-					m.statusMessage = "Moved doc down"
-					m.statusMessageTime = time.Now()
-				}
+				m.registryDirty = true
+				m.statusMessage = "Moved doc down"
+				m.statusMessageTime = time.Now()
+				// Schedule debounced save (150ms delay)
+				return m, ScheduleRegistrySave(150 * time.Millisecond)
 			}
 			return m, nil
 
@@ -1075,5 +1080,16 @@ func (m *Model) moveDocInCategory(fromIdx, toIdx int) {
 	if fromGlobalIdx >= 0 && toGlobalIdx >= 0 {
 		m.docRegistry.Docs[fromGlobalIdx], m.docRegistry.Docs[toGlobalIdx] =
 			m.docRegistry.Docs[toGlobalIdx], m.docRegistry.Docs[fromGlobalIdx]
+	}
+}
+
+// saveRegistryAsync returns a command that saves the registry in the background
+func (m *Model) saveRegistryAsync() tea.Cmd {
+	registry := m.docRegistry // Capture current state
+	rootPath := m.rootPath
+
+	return func() tea.Msg {
+		err := groups.SaveContextDocRegistry(rootPath, registry)
+		return RegistrySavedMsg{Err: err}
 	}
 }

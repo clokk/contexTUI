@@ -57,6 +57,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle debounced registry save timer
+	if _, ok := msg.(SaveRegistryMsg); ok {
+		// Only save if still dirty and not already saving
+		if m.registryDirty && !m.registrySaving {
+			m.registryDirty = false // Clear before save so we detect new changes during save
+			m.registrySaving = true
+			return m, m.saveRegistryAsync()
+		}
+		return m, nil
+	}
+
+	// Handle registry save completion
+	if saveMsg, ok := msg.(RegistrySavedMsg); ok {
+		m.registrySaving = false
+		if saveMsg.Err != nil {
+			m.statusMessage = "Failed to save registry"
+			m.statusMessageTime = time.Now()
+		}
+		// If dirty again (user moved more docs while saving), schedule another save
+		if m.registryDirty {
+			return m, ScheduleRegistrySave(150 * time.Millisecond)
+		}
+		return m, nil
+	}
+
 	// Handle help toggle (works from any mode)
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "?" {
 		m.showingHelp = !m.showingHelp
