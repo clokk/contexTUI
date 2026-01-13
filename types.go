@@ -16,23 +16,6 @@ const (
 	previewPane
 )
 
-// Layer represents an architectural layer in the swimlane view
-type Layer struct {
-	ID   string // "ui", "feature", "data", "integration", "misc"
-	Name string // "UI Layer", "Feature Layer", etc.
-}
-
-// ContextGroup represents a named group of files
-type ContextGroup struct {
-	Name        string
-	Description string
-	Files       []string // Relative paths
-	Layer       string   // Layer ID this group belongs to
-	Parent      string   // Parent group name (for hierarchy)
-	Contains    []string // Child group names (inverse of Parent)
-	Tags        []string // Cross-cutting concern tags
-}
-
 // GitFileStatus represents the status of a file in git
 type GitFileStatus struct {
 	Path    string // Relative path from repo root
@@ -69,15 +52,17 @@ type model struct {
 	searchCursor  int
 	allFiles      []string // Flat list of all file paths for searching
 
-	// Context groups
-	layers             []Layer                   // Ordered list of layers
-	layerGroups        map[string][]ContextGroup // Layer ID -> groups in that layer
-	contextGroups      []ContextGroup            // All groups (flat list)
-	fileToGroups       map[string][]string       // Maps file path to group names
-	showingGroups      bool
-	layerCursor        int // Which layer (row) is selected in swimlane
-	groupCursor        int // Which group within layer (column) is selected
-	groupsScrollOffset int // Scroll offset for groups overlay
+	// Context groups (documentation-first)
+	docRegistry        *DocGroupRegistry   // Doc-based context groups
+	showingGroups      bool                // True when groups overlay is visible
+	selectedSupergroup int                 // Index of selected supergroup (for filtering)
+	docGroupCursor     int                 // Selected group in current supergroup view
+	groupsScrollOffset int                 // Scroll offset for groups overlay
+	selectedGroups     map[string]bool     // Selected groups for multi-copy (keyed by filepath)
+	addingGroup        bool                // True when in "add group" mode
+	availableMdFiles   []string          // .md files available to add
+	addGroupCursor     int               // Cursor in add group picker
+	addGroupScroll     int               // Scroll offset in add group picker
 
 	// File watcher
 	watcher *fsnotify.Watcher

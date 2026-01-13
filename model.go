@@ -35,8 +35,8 @@ func initialModel(rootPath string) model {
 	// Collect all files for searching
 	allFiles := collectAllFiles(absPath)
 
-	// Load context groups
-	layers, layerGroups, groups, fileToGroups := loadContextGroups(absPath)
+	// Load doc-based context groups
+	docRegistry, _ := LoadDocGroupRegistry(absPath)
 
 	// Check for git repository and load git status
 	isGit, gitRoot := isGitRepo(absPath)
@@ -77,19 +77,18 @@ func initialModel(rootPath string) model {
 	}
 
 	return model{
-		rootPath:      absPath,
-		entries:       entries,
-		cursor:        0,
-		activePane:    treePane,
-		splitRatio:    splitRatio,
-		previewCache:  make(map[string]cachedPreview),
-		searchInput:   ti,
-		allFiles:      allFiles,
-		layers:        layers,
-		layerGroups:   layerGroups,
-		contextGroups: groups,
-		fileToGroups:  fileToGroups,
-		watcher:       watcher,
+		rootPath:     absPath,
+		entries:      entries,
+		cursor:       0,
+		activePane:   treePane,
+		splitRatio:   splitRatio,
+		previewCache: make(map[string]cachedPreview),
+		searchInput:  ti,
+		allFiles:     allFiles,
+		watcher:      watcher,
+		// Context groups
+		docRegistry:    docRegistry,
+		selectedGroups: make(map[string]bool),
 		// Git integration
 		isGitRepo:      isGit,
 		gitRepoRoot:    gitRoot,
@@ -204,7 +203,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(fsEventMsg); ok {
 		m.entries = loadDirectory(m.rootPath, 0)
 		m.allFiles = collectAllFiles(m.rootPath)
-		m.layers, m.layerGroups, m.contextGroups, m.fileToGroups = loadContextGroups(m.rootPath)
+		// Reload doc-based context groups
+		m.docRegistry, _ = LoadDocGroupRegistry(m.rootPath)
 		// Refresh git status
 		if m.isGitRepo {
 			m.gitStatus, m.gitChanges = loadGitStatus(m.gitRepoRoot)
@@ -495,12 +495,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "g":
 			// Show groups panel
-			if len(m.contextGroups) > 0 {
-				m.showingGroups = true
-				m.groupCursor = 0
-				m.layerCursor = 0
-				m.groupsScrollOffset = 0
-			}
+			m.showingGroups = true
+			m.docGroupCursor = 0
+			m.groupsScrollOffset = 0
 			return m, nil
 
 		case "v":

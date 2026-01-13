@@ -237,12 +237,9 @@ func (m model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Show groups overlay - SHARED
 		case "g":
-			if len(m.contextGroups) > 0 {
-				m.showingGroups = true
-				m.groupCursor = 0
-				m.layerCursor = 0
-				m.groupsScrollOffset = 0
-			}
+			m.showingGroups = true
+			m.docGroupCursor = 0
+			m.groupsScrollOffset = 0
 			return m, nil
 
 		// Enter copy mode - SHARED

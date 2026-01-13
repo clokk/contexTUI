@@ -1,5 +1,18 @@
 # contexTUI Vision
 
+**Supergroup:** Meta
+**Status:** Active
+
+## Description
+
+The product vision and philosophy behind contexTUI - a context-aware terminal file browser for AI-assisted development.
+
+## Key Files
+
+- main.go - Application entry point
+- model.go - Core application state and logic
+- types.go - Data structures
+
 ## The Shift
 
 The job is changing. Features that took a week can now be done in minutes with proper AI collaboration. But this velocity shift creates a new bottleneck: human judgment, not execution.

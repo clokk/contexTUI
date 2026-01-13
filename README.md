@@ -1,5 +1,19 @@
 # contexTUI
 
+**Supergroup:** Meta
+**Status:** Active
+
+## Description
+
+User-facing documentation for contexTUI - installation, usage, and key commands.
+
+## Key Files
+
+- main.go - Application entry point
+- .context-groups.md - Context groups configuration
+
+---
+
 A context-aware terminal file browser for AI-assisted development.
 
 > See [VISION.md](VISION.md) for the philosophy behind this tool.

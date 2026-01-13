@@ -10,318 +10,283 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// loadContextGroups parses .context-groups.md and returns layers, groups, and mappings
-// If the file doesn't exist, it creates a default template
-func loadContextGroups(rootPath string) ([]Layer, map[string][]ContextGroup, []ContextGroup, map[string][]string) {
-	layers := []Layer{}
-	layerGroups := make(map[string][]ContextGroup)
-	groups := []ContextGroup{}
-	fileToGroups := make(map[string][]string)
+// StructureNeededTag is inserted into files that need context group structuring
+const StructureNeededTag = "<!-- contexTUI: structure-needed -->\n"
 
-	groupsFile := filepath.Join(rootPath, ".context-groups.md")
-	content, err := os.ReadFile(groupsFile)
-	if err != nil {
-		// Create default template if file doesn't exist
-		if os.IsNotExist(err) {
-			createDefaultContextGroupsFile(groupsFile)
-		}
-		return layers, layerGroups, groups, fileToGroups
-	}
+// StructuringPrompt is copied when user presses 'p' in groups overlay
+const StructuringPrompt = `Find all markdown files in this project containing the comment:
+<!-- contexTUI: structure-needed -->
 
-	lines := strings.Split(string(content), "\n")
-	var currentGroup *ContextGroup
-	var descLines []string
-	parsingLayers := false
-	passedSeparator := false
+For each file, read .context-groups.md to understand the required structure,
+then update the file to include:
+- **Supergroup:** (Meta, Feature, or custom category)
+- **Status:** Active
+- ## Description section
+- ## Key Files section
 
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
+Remove the <!-- contexTUI: structure-needed --> tag after structuring.`
 
-		// Detect layers: block start
-		if trimmed == "layers:" {
-			parsingLayers = true
-			continue
-		}
-
-		// Parse layer definitions (  - id: Name)
-		if parsingLayers && strings.HasPrefix(trimmed, "- ") {
-			layerDef := strings.TrimPrefix(trimmed, "- ")
-			parts := strings.SplitN(layerDef, ":", 2)
-			if len(parts) == 2 {
-				layers = append(layers, Layer{
-					ID:   strings.TrimSpace(parts[0]),
-					Name: strings.TrimSpace(parts[1]),
-				})
-			}
-			continue
-		}
-
-		// End of layers block (separator or new section)
-		if parsingLayers && (trimmed == "---" || strings.HasPrefix(trimmed, "#")) {
-			parsingLayers = false
-			if trimmed == "---" {
-				passedSeparator = true
-				continue
-			}
-		}
-
-		// New group heading (## name)
-		if strings.HasPrefix(trimmed, "## ") {
-			// Save previous group if exists
-			if currentGroup != nil {
-				currentGroup.Description = strings.TrimSpace(strings.Join(descLines, " "))
-				groups = append(groups, *currentGroup)
-			}
-			// Start new group
-			groupName := strings.TrimPrefix(trimmed, "## ")
-			currentGroup = &ContextGroup{Name: groupName}
-			descLines = nil
-			continue
-		}
-
-		// Skip if no current group
-		if currentGroup == nil {
-			continue
-		}
-
-		// Parse metadata fields (layer:, parent:, tags:, contains:)
-		if strings.HasPrefix(trimmed, "layer:") {
-			currentGroup.Layer = strings.TrimSpace(strings.TrimPrefix(trimmed, "layer:"))
-			continue
-		}
-		if strings.HasPrefix(trimmed, "parent:") {
-			currentGroup.Parent = strings.TrimSpace(strings.TrimPrefix(trimmed, "parent:"))
-			continue
-		}
-		if strings.HasPrefix(trimmed, "tags:") {
-			tagsStr := strings.TrimSpace(strings.TrimPrefix(trimmed, "tags:"))
-			currentGroup.Tags = parseListField(tagsStr)
-			continue
-		}
-		if strings.HasPrefix(trimmed, "contains:") {
-			containsStr := strings.TrimSpace(strings.TrimPrefix(trimmed, "contains:"))
-			currentGroup.Contains = parseListField(containsStr)
-			continue
-		}
-
-		// File entry (- path/to/file)
-		if strings.HasPrefix(trimmed, "- ") {
-			filePath := strings.TrimPrefix(trimmed, "- ")
-			filePath = strings.TrimSpace(filePath)
-			if filePath != "" {
-				currentGroup.Files = append(currentGroup.Files, filePath)
-				// Add to reverse mapping
-				fileToGroups[filePath] = append(fileToGroups[filePath], currentGroup.Name)
-			}
-			continue
-		}
-
-		// Description text (non-empty, non-heading, non-file, non-metadata lines)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "---") {
-			descLines = append(descLines, trimmed)
-		}
-	}
-
-	// Save last group
-	if currentGroup != nil {
-		currentGroup.Description = strings.TrimSpace(strings.Join(descLines, " "))
-		groups = append(groups, *currentGroup)
-	}
-
-	// Build layerGroups map, defaulting to "misc" layer
-	miscLayerNeeded := false
-	for _, g := range groups {
-		layerID := g.Layer
-		if layerID == "" {
-			layerID = "misc"
-			miscLayerNeeded = true
-		}
-		layerGroups[layerID] = append(layerGroups[layerID], g)
-	}
-
-	// Add misc layer if needed and not already defined
-	if miscLayerNeeded {
-		hasMisc := false
-		for _, l := range layers {
-			if l.ID == "misc" {
-				hasMisc = true
-				break
-			}
-		}
-		if !hasMisc {
-			layers = append(layers, Layer{ID: "misc", Name: "Miscellaneous"})
-		}
-	}
-
-	// Ignore passedSeparator warning
-	_ = passedSeparator
-
-	return layers, layerGroups, groups, fileToGroups
-}
-
-// parseListField parses "[item1, item2]" or "item1, item2" into a slice
-func parseListField(s string) []string {
-	s = strings.TrimPrefix(s, "[")
-	s = strings.TrimSuffix(s, "]")
-	parts := strings.Split(s, ",")
-	result := []string{}
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	return result
-}
-
-// createDefaultContextGroupsFile creates a starter template for new projects
-func createDefaultContextGroupsFile(path string) {
-	template := `# Context Groups
-
-Organize your codebase into logical groups for AI-assisted development.
-This file is used by contexTUI to provide quick context loading for Claude and other AI tools.
-
-## Format
-
-` + "```markdown" + `
-## group-name
-layer: <layer-id>        # Which architectural layer (docs, ui, feature, data, integration)
-parent: <parent-group>   # Optional: nest under another group
-tags: [tag1, tag2]       # Optional: cross-cutting concerns
-contains: [child1]       # Optional: list of child groups (for readability)
-
-Description of what this group contains and when to use it.
-
-- path/to/file1.ts
-- path/to/file2.tsx
-` + "```" + `
-
-## Usage
-
-**In contexTUI:**
-- Files show ` + "`[group-name]`" + ` badges in the tree view
-- Press ` + "`g`" + ` to open the swimlane view (groups organized by layer)
-- Navigate: ` + "`h/l`" + ` switch layers, ` + "`j/k`" + ` switch groups
-- Press ` + "`enter`" + ` or ` + "`c`" + ` to copy all files as ` + "`@filepath`" + ` references
-
-**For AI Agents:**
-When asked to work on a feature, look for a relevant context group here. Groups are
-self-contained units of related functionality. Copy the group to load all necessary
-context at once, rather than searching for files individually.
-
-**Creating Groups:**
-Create a group when you have files that are frequently used together. Good candidates:
-- Feature implementations spanning multiple files
-- Related files across different directories
-- Context you'd copy-paste to Claude regularly
-
-**Design Principle:**
-Text lives in files, not inline. If you need to add instructions or notes, create a
-markdown file and include it in the group. This keeps groups composable - the same
-file can be referenced by multiple groups.
-
-**Git:** Commit this file so team members share the same context group definitions.
-
----
-
-layers:
-  - docs: Documentation
-  - ui: UI Layer
-  - feature: Feature Layer
-  - data: Data Layer
-  - integration: Integration Layer
-
----
-
-## example
-layer: feature
-tags: [starter]
-
-Example context group. Replace with your own groups based on your codebase structure.
-
-- README.md
-`
-	os.WriteFile(path, []byte(template), 0644)
-}
-
+// updateGroups handles the context groups overlay
 func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Get flat ordered list of all groups for linear navigation
-	allGroups := m.getFlatGroupList()
-	totalGroups := len(allGroups)
+	// Handle add group mode separately
+	if m.addingGroup {
+		return m.updateAddGroup(msg)
+	}
 
-	// Convert current 2D position to flat index
-	flatIndex := m.getFlatGroupIndex()
+	// Get groups for current supergroup
+	currentGroups := m.getGroupsForSelectedSupergroup()
+	totalGroups := len(currentGroups)
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "esc", "g":
+		case "esc":
 			m.showingGroups = false
 			return m, nil
 
+		case "left", "h":
+			// Previous supergroup
+			if m.docRegistry != nil && len(m.docRegistry.Supergroups) > 0 {
+				m.selectedSupergroup--
+				if m.selectedSupergroup < 0 {
+					m.selectedSupergroup = len(m.docRegistry.Supergroups) - 1
+				}
+				m.docGroupCursor = 0
+				m.groupsScrollOffset = 0
+			}
+			return m, nil
+
+		case "right", "l":
+			// Next supergroup
+			if m.docRegistry != nil && len(m.docRegistry.Supergroups) > 0 {
+				m.selectedSupergroup++
+				if m.selectedSupergroup >= len(m.docRegistry.Supergroups) {
+					m.selectedSupergroup = 0
+				}
+				m.docGroupCursor = 0
+				m.groupsScrollOffset = 0
+			}
+			return m, nil
+
 		case "up", "k":
-			// Move up through all groups (cross layer boundaries)
-			if flatIndex > 0 {
-				m.setGroupFromFlatIndex(flatIndex - 1)
-				m.ensureGroupSelectionVisible()
+			if m.docGroupCursor > 0 {
+				m.docGroupCursor--
+				m.ensureDocGroupVisible()
 			}
 			return m, nil
 
 		case "down", "j":
-			// Move down through all groups (cross layer boundaries)
-			if flatIndex < totalGroups-1 {
-				m.setGroupFromFlatIndex(flatIndex + 1)
-				m.ensureGroupSelectionVisible()
+			if m.docGroupCursor < totalGroups-1 {
+				m.docGroupCursor++
+				m.ensureDocGroupVisible()
 			}
 			return m, nil
 
 		case "enter", "c":
-			// Copy the selected group to clipboard
-			selectedGroup := m.getSelectedGroup()
-			if selectedGroup != nil {
-				if err := copyGroupToClipboard(m.rootPath, *selectedGroup); err != nil {
+			// Copy selected groups (or current if none selected) as @filepath references
+			if len(m.selectedGroups) > 0 {
+				// Copy all selected groups - iterate directly over selectedGroups map
+				var refs []string
+				for path := range m.selectedGroups {
+					refs = append(refs, "@"+path)
+				}
+				combined := strings.Join(refs, "\n")
+				if err := copyRawToClipboard(combined); err != nil {
 					m.statusMessage = "Clipboard unavailable"
 				} else {
-					m.statusMessage = fmt.Sprintf("Copied %d files!", len(selectedGroup.Files))
+					m.statusMessage = fmt.Sprintf("Copied %d references", len(refs))
+				}
+				// Clear selections after copy
+				m.selectedGroups = make(map[string]bool)
+				m.statusMessageTime = time.Now()
+				return m, clearStatusAfter(5 * time.Second)
+			} else if m.docGroupCursor < totalGroups {
+				// Copy single current group as @filepath reference
+				group := currentGroups[m.docGroupCursor]
+				if err := copyToClipboard(group.FilePath); err != nil {
+					m.statusMessage = "Clipboard unavailable"
+				} else {
+					m.statusMessage = fmt.Sprintf("Copied: @%s", group.FilePath)
 				}
 				m.statusMessageTime = time.Now()
-				m.showingGroups = false
-				return m, clearStatusAfter(3 * time.Second)
+				return m, clearStatusAfter(5 * time.Second)
 			}
 			return m, nil
+
+		case "a":
+			// Find available .md files to add
+			mdFiles, _ := FindMarkdownFiles(m.rootPath)
+			// Filter out already-added files
+			var available []string
+			existingPaths := make(map[string]bool)
+			if m.docRegistry != nil {
+				for _, g := range m.docRegistry.Groups {
+					existingPaths[g.FilePath] = true
+				}
+			}
+			for _, f := range mdFiles {
+				if !existingPaths[f] {
+					available = append(available, f)
+				}
+			}
+			if len(available) == 0 {
+				m.statusMessage = "No markdown files available to add"
+				m.statusMessageTime = time.Now()
+				return m, clearStatusAfter(5 * time.Second)
+			}
+			m.availableMdFiles = available
+			m.addGroupCursor = 0
+			m.addGroupScroll = 0
+			m.addingGroup = true
+			return m, nil
+
+		case "p":
+			// Copy the structuring prompt to clipboard
+			if err := copyToClipboard(StructuringPrompt); err != nil {
+				m.statusMessage = "Clipboard unavailable"
+			} else {
+				m.statusMessage = "Copied structuring prompt!"
+			}
+			m.statusMessageTime = time.Now()
+			return m, clearStatusAfter(5 * time.Second)
+
+		case "d", "x":
+			// Remove the selected group from registry
+			if m.docGroupCursor < totalGroups && m.docRegistry != nil {
+				group := currentGroups[m.docGroupCursor]
+
+				// Remove from Groups slice
+				for i, g := range m.docRegistry.Groups {
+					if g.FilePath == group.FilePath {
+						m.docRegistry.Groups = append(m.docRegistry.Groups[:i], m.docRegistry.Groups[i+1:]...)
+						break
+					}
+				}
+
+				// Remove from BySuper map
+				sgID := strings.ToLower(strings.ReplaceAll(group.Supergroup, " ", "-"))
+				if sgID == "" {
+					sgID = "miscellaneous"
+				}
+				groups := m.docRegistry.BySuper[sgID]
+				for i, g := range groups {
+					if g.FilePath == group.FilePath {
+						m.docRegistry.BySuper[sgID] = append(groups[:i], groups[i+1:]...)
+						break
+					}
+				}
+
+				// Adjust cursor if needed
+				if m.docGroupCursor >= len(m.docRegistry.BySuper[sgID]) {
+					m.docGroupCursor = len(m.docRegistry.BySuper[sgID]) - 1
+				}
+				if m.docGroupCursor < 0 {
+					m.docGroupCursor = 0
+				}
+
+				// Strip contexTUI metadata from the markdown file
+				stripContextGroupMetadata(m.rootPath, group.FilePath)
+
+				// Save registry
+				if err := SaveDocGroupRegistry(m.rootPath, m.docRegistry); err != nil {
+					m.statusMessage = fmt.Sprintf("Error: %v", err)
+				} else {
+					m.statusMessage = fmt.Sprintf("Removed %s", group.Name)
+				}
+				m.statusMessageTime = time.Now()
+				return m, clearStatusAfter(5 * time.Second)
+			}
+			return m, nil
+
+		case " ":
+			// Toggle selection of current group for multi-copy
+			if m.docGroupCursor < totalGroups {
+				group := currentGroups[m.docGroupCursor]
+				if m.selectedGroups[group.FilePath] {
+					delete(m.selectedGroups, group.FilePath)
+					m.statusMessage = fmt.Sprintf("Deselected (%d total)", len(m.selectedGroups))
+				} else {
+					m.selectedGroups[group.FilePath] = true
+					m.statusMessage = fmt.Sprintf("Selected (%d total)", len(m.selectedGroups))
+				}
+				m.statusMessageTime = time.Now()
+				return m, clearStatusAfter(2 * time.Second)
+			}
+			return m, nil
+
 		}
 
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			// Check if click is on a group line and copy it
-			clickedGroup := m.getGroupAtClick(msg.X, msg.Y)
-			if clickedGroup != nil {
-				if err := copyGroupToClipboard(m.rootPath, *clickedGroup); err != nil {
-					m.statusMessage = "Clipboard unavailable"
+			// First check if clicking on navigation bar (prev/next arrows)
+			navClick := m.findClickedNav(msg.X, msg.Y)
+			if navClick == navClickPrev && m.docRegistry != nil {
+				// Go to previous supergroup
+				m.selectedSupergroup--
+				if m.selectedSupergroup < 0 {
+					m.selectedSupergroup = len(m.docRegistry.Supergroups) - 1
+				}
+				m.docGroupCursor = 0
+				m.groupsScrollOffset = 0
+				return m, nil
+			} else if navClick == navClickNext && m.docRegistry != nil {
+				// Go to next supergroup
+				m.selectedSupergroup++
+				if m.selectedSupergroup >= len(m.docRegistry.Supergroups) {
+					m.selectedSupergroup = 0
+				}
+				m.docGroupCursor = 0
+				m.groupsScrollOffset = 0
+				return m, nil
+			}
+
+			// Try to find which card was clicked
+			clickedIdx := m.findClickedGroup(msg.X, msg.Y)
+			if clickedIdx >= 0 && clickedIdx < totalGroups {
+				// Move cursor to clicked item
+				m.docGroupCursor = clickedIdx
+				m.ensureDocGroupVisible()
+
+				// If multi-select is active, copy all selected
+				if len(m.selectedGroups) > 0 {
+					var refs []string
+					for path := range m.selectedGroups {
+						refs = append(refs, "@"+path)
+					}
+					combined := strings.Join(refs, "\n")
+					if err := copyRawToClipboard(combined); err != nil {
+						m.statusMessage = "Clipboard unavailable"
+					} else {
+						m.statusMessage = fmt.Sprintf("Copied %d references", len(refs))
+					}
+					m.selectedGroups = make(map[string]bool)
 				} else {
-					m.statusMessage = fmt.Sprintf("Copied %d files!", len(clickedGroup.Files))
+					// Copy the clicked group as @filepath reference
+					group := currentGroups[clickedIdx]
+					if err := copyToClipboard(group.FilePath); err != nil {
+						m.statusMessage = "Clipboard unavailable"
+					} else {
+						m.statusMessage = fmt.Sprintf("Copied: @%s", group.FilePath)
+					}
 				}
 				m.statusMessageTime = time.Now()
-				m.showingGroups = false
-				return m, clearStatusAfter(3 * time.Second)
+				return m, clearStatusAfter(5 * time.Second)
 			}
 		} else if msg.Button == tea.MouseButtonWheelUp {
-			// Scroll view up (1 line for smoother trackpad scrolling)
 			m.groupsScrollOffset--
 			if m.groupsScrollOffset < 0 {
 				m.groupsScrollOffset = 0
 			}
 			return m, nil
 		} else if msg.Button == tea.MouseButtonWheelDown {
-			// Scroll view down (1 line for smoother trackpad scrolling)
 			m.groupsScrollOffset++
-			// Clamp to max scroll
-			maxContentHeight := m.height - 16
-			if maxContentHeight < 8 {
-				maxContentHeight = 8
+			// Estimate max scroll based on card layout (~7 lines per card + headers)
+			maxContentHeight := m.height - 8
+			if maxContentHeight < 10 {
+				maxContentHeight = 10
 			}
-			totalLines := m.getTotalGroupLines()
-			maxScroll := totalLines - maxContentHeight
+			estimatedLines := m.estimateGroupsLineCount()
+			maxScroll := estimatedLines - maxContentHeight
 			if maxScroll < 0 {
 				maxScroll = 0
 			}
@@ -334,78 +299,20 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// getGroupCountForCurrentLayer returns the number of groups in the current layer
-func (m model) getGroupCountForCurrentLayer() int {
-	if len(m.layers) == 0 {
-		return len(m.contextGroups)
-	}
-	if m.layerCursor >= len(m.layers) {
-		return 0
-	}
-	layer := m.layers[m.layerCursor]
-	return len(m.getOrderedGroupsForLayer(layer.ID))
-}
-
-// getFlatGroupList returns all groups in display order (for linear navigation)
-func (m model) getFlatGroupList() []ContextGroup {
-	if len(m.layers) == 0 {
-		return m.contextGroups
-	}
-
-	var result []ContextGroup
-	for _, layer := range m.layers {
-		groups := m.getOrderedGroupsForLayer(layer.ID)
-		result = append(result, groups...)
-	}
-	return result
-}
-
-// getFlatGroupIndex converts current 2D cursor position to flat index
-func (m model) getFlatGroupIndex() int {
-	if len(m.layers) == 0 {
-		return m.groupCursor
-	}
-
-	flatIdx := 0
-	for i := 0; i < m.layerCursor; i++ {
-		flatIdx += len(m.getOrderedGroupsForLayer(m.layers[i].ID))
-	}
-	flatIdx += m.groupCursor
-	return flatIdx
-}
-
-// setGroupFromFlatIndex sets layerCursor and groupCursor from a flat index
-func (m *model) setGroupFromFlatIndex(flatIdx int) {
-	if len(m.layers) == 0 {
-		m.groupCursor = flatIdx
+// ensureDocGroupVisible ensures the selected doc group is visible
+func (m *model) ensureDocGroupVisible() {
+	if m.docRegistry == nil {
 		return
 	}
 
-	remaining := flatIdx
-	for i, layer := range m.layers {
-		groupCount := len(m.getOrderedGroupsForLayer(layer.ID))
-		if remaining < groupCount {
-			m.layerCursor = i
-			m.groupCursor = remaining
-			return
-		}
-		remaining -= groupCount
-	}
-}
-
-// ensureGroupSelectionVisible updates groupsScrollOffset to keep the selected group visible
-func (m *model) ensureGroupSelectionVisible() {
-	// Calculate max content height (same as renderGroupsOverlay)
 	maxContentHeight := m.height - 16
 	if maxContentHeight < 8 {
 		maxContentHeight = 8
 	}
 
-	// Calculate the line index of the selected item
-	selectedLineIdx := m.getSelectedGroupLineIndex()
-	totalLines := m.getTotalGroupLines()
+	lineIdx := m.getDocGroupLineIndex(m.docGroupCursor)
+	totalLines := m.getDocGroupTotalLines()
 
-	// Clamp scroll offset to valid range
 	maxScroll := totalLines - maxContentHeight
 	if maxScroll < 0 {
 		maxScroll = 0
@@ -417,251 +324,420 @@ func (m *model) ensureGroupSelectionVisible() {
 		m.groupsScrollOffset = 0
 	}
 
-	// Ensure selected line is visible
-	if selectedLineIdx < m.groupsScrollOffset {
-		m.groupsScrollOffset = selectedLineIdx
-	} else if selectedLineIdx >= m.groupsScrollOffset+maxContentHeight {
-		m.groupsScrollOffset = selectedLineIdx - maxContentHeight + 1
+	if lineIdx < m.groupsScrollOffset {
+		m.groupsScrollOffset = lineIdx
+	} else if lineIdx >= m.groupsScrollOffset+maxContentHeight {
+		m.groupsScrollOffset = lineIdx - maxContentHeight + 1
 	}
 }
 
-// getSelectedGroupLineIndex returns the line index for the currently selected group
-func (m model) getSelectedGroupLineIndex() int {
-	lineIdx := 1 // Start at 1 (after title)
-
-	if len(m.layers) == 0 {
-		// Simple list mode: title + blank line + groups
-		return lineIdx + 1 + m.groupCursor // +1 for blank line after title
+// getDocGroupLineIndex returns the line index for a given group index
+func (m model) getDocGroupLineIndex(groupIdx int) int {
+	if m.docRegistry == nil {
+		return 0
 	}
 
-	// Swimlane mode - count lines through layers/groups
-	flatIdx := m.getFlatGroupIndex()
-	currentFlatIdx := 0
+	lineIdx := 1 // Title line
 
-	for _, layer := range m.layers {
-		groups := m.layerGroups[layer.ID]
+	currentGroupIdx := 0
+	for _, sg := range m.docRegistry.Supergroups {
+		groups := m.docRegistry.BySuper[sg.ID]
 		if len(groups) == 0 {
 			continue
 		}
 
-		lineIdx += 2 // separator + layer name
+		lineIdx += 2 // separator + supergroup name
 
-		orderedGroups := m.getOrderedGroupsForLayer(layer.ID)
-		for range orderedGroups {
-			if currentFlatIdx == flatIdx {
+		for range groups {
+			if currentGroupIdx == groupIdx {
 				return lineIdx
 			}
 			lineIdx++
-			currentFlatIdx++
+			currentGroupIdx++
 		}
 	}
 
 	return lineIdx
 }
 
-// getTotalGroupLines returns the total number of lines in the groups overlay content
-func (m model) getTotalGroupLines() int {
-	lineCount := 1 // Title
+// getDocGroupTotalLines returns total lines in the doc groups overlay
+func (m model) getDocGroupTotalLines() int {
+	return m.estimateGroupsLineCount()
+}
 
-	if len(m.contextGroups) == 0 {
-		return lineCount + 3 // empty message lines
+// estimateGroupsLineCount estimates actual rendered line count for card layout
+func (m model) estimateGroupsLineCount() int {
+	groups := m.getGroupsForSelectedSupergroup()
+
+	if len(groups) == 0 {
+		return 10 // Title + tabs + empty message
 	}
 
-	if len(m.layers) == 0 {
-		return lineCount + 1 + len(m.contextGroups) // blank line + groups
-	}
+	lineCount := 6 // Title + blank + tabs + separator + blank
 
-	// Swimlane mode
-	for _, layer := range m.layers {
-		groups := m.layerGroups[layer.ID]
-		if len(groups) == 0 {
-			continue
+	// Each card: ~8 lines (border top/bottom + title + filepath + 3 desc + key files)
+	for _, group := range groups {
+		cardLines := 5 // borders (2) + title (1) + filepath (1) + key files (1)
+		if group.Description != "" {
+			// Estimate wrapped description lines (max 3)
+			descLen := len(group.Description)
+			descLines := (descLen / 60) + 1
+			if descLines > 3 {
+				descLines = 3
+			}
+			cardLines += descLines
 		}
-		lineCount += 2 // separator + layer name
-		lineCount += len(m.getOrderedGroupsForLayer(layer.ID))
+		lineCount += cardLines
 	}
 
 	return lineCount
 }
 
-// getGroupAtClick returns the group at the clicked screen position, or nil
-func (m model) getGroupAtClick(x, y int) *ContextGroup {
-	// Calculate overlay position (centered)
-	boxWidth := 55
-	boxHeight := m.height - 16 + 10 // content + fixed elements
-	if boxHeight > m.height-4 {
-		boxHeight = m.height - 4
+// Navigation click constants
+const (
+	navClickNone = -1
+	navClickPrev = -2
+	navClickNext = -3
+)
+
+// findClickedNav detects clicks on the gallery navigation bar
+// Returns: navClickPrev (-2) for left third, navClickNext (-3) for right third, navClickNone (-1) otherwise
+func (m model) findClickedNav(clickX, clickY int) int {
+	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
+		return navClickNone
 	}
 
+	// Box dimensions (must match render.go)
+	cardWidth := 68
+	boxWidth := cardWidth + 8
 	boxLeft := (m.width - boxWidth) / 2
-	boxTop := (m.height - boxHeight) / 2
 
-	// Check if click is within the box
-	if x < boxLeft || x > boxLeft+boxWidth || y < boxTop || y > boxTop+boxHeight {
-		return nil
+	// Fixed height calculation (must match render.go)
+	fixedHeight := m.height - 6
+	if fixedHeight < 15 {
+		fixedHeight = 15
+	}
+	boxTop := (m.height - fixedHeight) / 2
+
+	// Check X is within box
+	if clickX < boxLeft || clickX > boxLeft+boxWidth {
+		return navClickNone
 	}
 
-	// Calculate relative Y position within content area
-	// Account for border(1) + padding(1) + title(1) = 3 lines before content
-	contentY := y - boxTop - 3
+	// Navigation bar is on line: boxTop + border(1) + padding(1) + title(1) + blank(1) = boxTop + 4
+	navLineY := boxTop + 4
 
-	// Build the line-to-group mapping
-	lineToGroup := make(map[int]*ContextGroup)
-	currentLine := 0
+	// Check if click Y is on the navigation line (with generous tolerance for the gallery row)
+	if clickY < navLineY-1 || clickY > navLineY+2 {
+		return navClickNone
+	}
 
-	if len(m.layers) == 0 {
-		for i := range m.contextGroups {
-			lineToGroup[currentLine] = &m.contextGroups[i]
-			currentLine++
-		}
-	} else {
-		for _, layer := range m.layers {
-			groups := m.layerGroups[layer.ID]
-			if len(groups) == 0 {
-				continue
+	// Split box into thirds: left = prev, middle = current (no action), right = next
+	thirdWidth := boxWidth / 3
+	leftThirdEnd := boxLeft + thirdWidth
+	rightThirdStart := boxLeft + 2*thirdWidth
+
+	if clickX < leftThirdEnd {
+		return navClickPrev
+	} else if clickX >= rightThirdStart {
+		return navClickNext
+	}
+
+	// Click in middle third (current) - no navigation
+	return navClickNone
+}
+
+// findClickedGroup returns the index of the group at the click position, or -1
+func (m model) findClickedGroup(clickX, clickY int) int {
+	groups := m.getGroupsForSelectedSupergroup()
+	if len(groups) == 0 {
+		return -1
+	}
+
+	// Box dimensions (must match render.go)
+	cardWidth := 68
+	boxWidth := cardWidth + 8
+
+	// Calculate box position (centered)
+	boxLeft := (m.width - boxWidth) / 2
+	boxRight := boxLeft + boxWidth
+
+	// Check X bounds
+	if clickX < boxLeft || clickX > boxRight {
+		return -1
+	}
+
+	// Calculate content layout
+	maxContentHeight := m.height - 8
+	if maxContentHeight < 10 {
+		maxContentHeight = 10
+	}
+
+	// Build the same lines array structure as render does
+	// Header: title(1) + blank(1) + nav bar(1) + blank(1) + separator(1) + blank(1) = 6 lines
+	headerLines := 6
+
+	// Calculate card line ranges (start line index for each card in the lines array)
+	cardStarts := make([]int, len(groups))
+	currentLine := headerLines
+	for i, group := range groups {
+		cardStarts[i] = currentLine
+		// Card height: border(2) + title(1) + filepath(1) + description(0-3) + keyfiles(1)
+		cardHeight := 5 // border top/bottom + title + filepath + key files
+		if group.Description != "" {
+			descLines := (len(group.Description) / 60) + 1
+			if descLines > 3 {
+				descLines = 3
 			}
-			currentLine += 2 // separator + layer name
+			cardHeight += descLines
+		}
+		currentLine += cardHeight
+	}
+	totalLines := currentLine
 
-			orderedGroups := m.getOrderedGroupsForLayer(layer.ID)
-			for i := range orderedGroups {
-				lineToGroup[currentLine] = &orderedGroups[i]
-				currentLine++
-			}
+	// Calculate scroll bounds
+	scrollOffset := m.groupsScrollOffset
+	maxScroll := totalLines - maxContentHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	// Fixed height calculation (must match render.go)
+	fixedHeight := m.height - 6
+	if fixedHeight < 15 {
+		fixedHeight = 15
+	}
+	boxTop := (m.height - fixedHeight) / 2
+
+	// Calculate which line in the lines array was clicked
+	// From click Y: subtract boxTop, border(1), padding(1)
+	contentY := clickY - boxTop - 2 // 2 = border + padding
+
+	// Account for "more above" indicator
+	if scrollOffset > 0 {
+		contentY-- // first visible line is "more above"
+	}
+
+	if contentY < 0 {
+		return -1
+	}
+
+	// The clicked line in the lines array
+	clickedLineIdx := scrollOffset + contentY
+
+	// Find which card contains this line
+	for i := len(groups) - 1; i >= 0; i-- {
+		if clickedLineIdx >= cardStarts[i] {
+			return i
 		}
 	}
 
-	// Adjust for scroll offset
-	maxContentHeight := m.height - 16
-	if maxContentHeight < 8 {
-		maxContentHeight = 8
-	}
+	return -1
+}
 
-	flatIndex := m.getFlatGroupIndex()
-	allGroups := m.getFlatGroupList()
-	selectedLineIdx := 0
-	currentLine = 0
-	for i, g := range allGroups {
-		if len(m.layers) > 0 {
-			// Account for layer headers
-			for _, layer := range m.layers {
-				if len(m.layerGroups[layer.ID]) > 0 {
-					if i == 0 || m.getLayerForGroup(allGroups[i-1].Name) != layer.ID {
-						if m.getLayerForGroup(g.Name) == layer.ID {
-							currentLine += 2
-							break
-						}
+// updateAddGroup handles the add group picker
+func (m model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
+	totalFiles := len(m.availableMdFiles)
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			m.addingGroup = false
+			return m, nil
+
+		case "up", "k":
+			if m.addGroupCursor > 0 {
+				m.addGroupCursor--
+				m.ensureAddGroupVisible()
+			}
+			return m, nil
+
+		case "down", "j":
+			if m.addGroupCursor < totalFiles-1 {
+				m.addGroupCursor++
+				m.ensureAddGroupVisible()
+			}
+			return m, nil
+
+		case "enter":
+			// Add the selected file as a context group
+			if m.addGroupCursor < totalFiles {
+				selectedPath := m.availableMdFiles[m.addGroupCursor]
+
+				// Parse the doc
+				group, err := ParseDocContextGroup(m.rootPath, selectedPath)
+				if err != nil {
+					m.statusMessage = fmt.Sprintf("Error: %v", err)
+					m.statusMessageTime = time.Now()
+					m.addingGroup = false
+					return m, clearStatusAfter(5 * time.Second)
+				}
+
+				// Validate and check staleness
+				group.ValidateKeyFiles(m.rootPath)
+				group.CheckStaleness(m.rootPath)
+
+				// If file is missing required structure, insert tag
+				if len(group.MissingFields) > 0 {
+					insertStructureTag(m.rootPath, selectedPath)
+				}
+
+				// Initialize registry if needed
+				if m.docRegistry == nil {
+					m.docRegistry = &DocGroupRegistry{
+						Supergroups: DefaultSupergroups(),
+						Groups:      []DocContextGroup{},
+						BySuper:     make(map[string][]DocContextGroup),
 					}
 				}
+
+				// Add to registry
+				m.docRegistry.Groups = append(m.docRegistry.Groups, *group)
+
+				// Update BySuper map
+				sgID := strings.ToLower(strings.ReplaceAll(group.Supergroup, " ", "-"))
+				if sgID == "" {
+					sgID = "miscellaneous"
+				}
+				m.docRegistry.BySuper[sgID] = append(m.docRegistry.BySuper[sgID], *group)
+
+				// Save registry
+				if err := SaveDocGroupRegistry(m.rootPath, m.docRegistry); err != nil {
+					m.statusMessage = fmt.Sprintf("Error saving: %v", err)
+				} else if len(group.MissingFields) > 0 {
+					m.statusMessage = "Added (incomplete)! Press 'p' for structuring prompt"
+				} else {
+					m.statusMessage = fmt.Sprintf("Added %s!", group.Name)
+				}
+				m.statusMessageTime = time.Now()
+				m.addingGroup = false
+				return m, clearStatusAfter(5 * time.Second)
 			}
+			return m, nil
 		}
-		if i == flatIndex {
-			selectedLineIdx = currentLine
+
+	case tea.MouseMsg:
+		if msg.Button == tea.MouseButtonWheelUp {
+			m.addGroupScroll--
+			if m.addGroupScroll < 0 {
+				m.addGroupScroll = 0
+			}
+			return m, nil
+		} else if msg.Button == tea.MouseButtonWheelDown {
+			m.addGroupScroll++
+			maxScroll := totalFiles - (m.height - 12)
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			if m.addGroupScroll > maxScroll {
+				m.addGroupScroll = maxScroll
+			}
+			return m, nil
 		}
-		currentLine++
 	}
-
-	scrollOffset := 0
-	totalLines := currentLine
-	if totalLines > maxContentHeight {
-		scrollOffset = selectedLineIdx - maxContentHeight/2
-		if scrollOffset < 0 {
-			scrollOffset = 0
-		}
-		if scrollOffset > totalLines-maxContentHeight {
-			scrollOffset = totalLines - maxContentHeight
-		}
-	}
-
-	// Account for scroll indicator at top
-	if scrollOffset > 0 {
-		contentY--
-	}
-
-	actualLine := contentY + scrollOffset
-	if group, ok := lineToGroup[actualLine]; ok {
-		return group
-	}
-
-	return nil
+	return m, nil
 }
 
-// getLayerForGroup returns the layer ID for a given group name
-func (m model) getLayerForGroup(groupName string) string {
-	for _, g := range m.contextGroups {
-		if g.Name == groupName {
-			return g.Layer
-		}
+// ensureAddGroupVisible keeps the cursor visible in add group picker
+func (m *model) ensureAddGroupVisible() {
+	maxHeight := m.height - 12
+	if maxHeight < 5 {
+		maxHeight = 5
 	}
-	return ""
+
+	if m.addGroupCursor < m.addGroupScroll {
+		m.addGroupScroll = m.addGroupCursor
+	} else if m.addGroupCursor >= m.addGroupScroll+maxHeight {
+		m.addGroupScroll = m.addGroupCursor - maxHeight + 1
+	}
 }
 
-// getSelectedGroup returns the currently selected group in swimlane view
-func (m model) getSelectedGroup() *ContextGroup {
-	if len(m.layers) == 0 {
-		if m.groupCursor < len(m.contextGroups) {
-			return &m.contextGroups[m.groupCursor]
-		}
+// getGroupsForSelectedSupergroup returns groups for the currently selected supergroup
+func (m model) getGroupsForSelectedSupergroup() []DocContextGroup {
+	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
 		return nil
 	}
 
-	if m.layerCursor >= len(m.layers) {
-		return nil
+	// Clamp selected supergroup
+	sgIdx := m.selectedSupergroup
+	if sgIdx < 0 {
+		sgIdx = 0
+	}
+	if sgIdx >= len(m.docRegistry.Supergroups) {
+		sgIdx = len(m.docRegistry.Supergroups) - 1
 	}
 
-	layer := m.layers[m.layerCursor]
-
-	// Build ordered list matching render order (parents first, then children)
-	orderedGroups := m.getOrderedGroupsForLayer(layer.ID)
-	if m.groupCursor < len(orderedGroups) {
-		return &orderedGroups[m.groupCursor]
-	}
-	return nil
+	sg := m.docRegistry.Supergroups[sgIdx]
+	return m.docRegistry.BySuper[sg.ID]
 }
 
-// getOrderedGroupsForLayer returns groups in render order (parents first, children indented)
-func (m model) getOrderedGroupsForLayer(layerID string) []ContextGroup {
-	groups := m.layerGroups[layerID]
-	if len(groups) == 0 {
+// getSelectedSupergroupName returns the name of the currently selected supergroup
+func (m model) getSelectedSupergroupName() string {
+	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
+		return ""
+	}
+
+	sgIdx := m.selectedSupergroup
+	if sgIdx < 0 {
+		sgIdx = 0
+	}
+	if sgIdx >= len(m.docRegistry.Supergroups) {
+		sgIdx = len(m.docRegistry.Supergroups) - 1
+	}
+
+	return m.docRegistry.Supergroups[sgIdx].Name
+}
+
+// insertStructureTag adds the structure-needed tag to a file if not already present
+func insertStructureTag(rootPath, filePath string) error {
+	fullPath := filepath.Join(rootPath, filePath)
+
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		return err
+	}
+
+	// Check if tag already exists
+	if strings.Contains(string(content), "<!-- contexTUI: structure-needed -->") {
 		return nil
 	}
 
-	// Build parent->children map
-	childrenOf := make(map[string][]string)
-	for _, g := range m.contextGroups {
-		if g.Parent != "" {
-			childrenOf[g.Parent] = append(childrenOf[g.Parent], g.Name)
-		}
+	// Prepend tag to file
+	newContent := StructureNeededTag + string(content)
+	return os.WriteFile(fullPath, []byte(newContent), 0644)
+}
+
+// stripContextGroupMetadata removes contexTUI-specific metadata from a markdown file
+// This is called when removing a group so it won't be auto-detected as complete if re-added
+func stripContextGroupMetadata(rootPath, filePath string) error {
+	fullPath := filepath.Join(rootPath, filePath)
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		return err
 	}
 
-	var ordered []ContextGroup
-	rendered := make(map[string]bool)
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
 
-	// First pass: parents and their children
-	for _, group := range groups {
-		if rendered[group.Name] || group.Parent != "" {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Skip contexTUI metadata lines
+		if strings.HasPrefix(trimmed, "**Supergroup:**") ||
+			strings.HasPrefix(trimmed, "**Status:**") ||
+			strings.HasPrefix(trimmed, "**Related:**") ||
+			strings.Contains(trimmed, "<!-- contexTUI: structure-needed -->") {
 			continue
 		}
-		ordered = append(ordered, group)
-		rendered[group.Name] = true
-
-		// Add children
-		for _, childName := range childrenOf[group.Name] {
-			for _, g := range groups {
-				if g.Name == childName {
-					ordered = append(ordered, g)
-					rendered[childName] = true
-					break
-				}
-			}
-		}
+		newLines = append(newLines, line)
 	}
 
-	// Second pass: orphan children
-	for _, group := range groups {
-		if !rendered[group.Name] {
-			ordered = append(ordered, group)
-		}
-	}
-
-	return ordered
+	return os.WriteFile(fullPath, []byte(strings.Join(newLines, "\n")), 0644)
 }
+

@@ -94,11 +94,11 @@ func (m model) View() string {
 		preview := previewStyle.Render(m.preview.View())
 
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tree, preview)
-		footer = m.renderBranchStatus() + footerStyle.Render("/ search  g groups  s git  q quit  ? help")
+		footer = m.renderBranchStatus() + footerStyle.Render("/ search  g groups  v select  s git  q quit  ? help")
 	}
 
 	// Prepend status message to footer if present and recent
-	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 3*time.Second {
+	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 5*time.Second {
 		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("118")).Bold(true)
 		footer = statusStyle.Render(m.statusMessage) + "  " + footer
 	}
@@ -241,11 +241,6 @@ func (m model) renderTree() string {
 	var b strings.Builder
 	flat := m.flatEntries()
 
-	// Context group badge style
-	badgeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("205")).
-		Faint(true)
-
 	// Git status styles
 	gitStyles := map[string]lipgloss.Style{
 		"M": lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true), // Yellow - modified
@@ -290,15 +285,6 @@ func (m model) renderTree() string {
 			}
 		}
 
-		// Add context group badges for files
-		if !e.isDir {
-			if groups, ok := m.fileToGroups[relPath]; ok {
-				for _, g := range groups {
-					line += " " + badgeStyle.Render("["+g+"]")
-				}
-			}
-		}
-
 		if i == m.cursor {
 			style := lipgloss.NewStyle().
 				Background(lipgloss.Color("205")).
@@ -316,135 +302,286 @@ func (m model) renderTree() string {
 }
 
 func (m model) renderGroupsOverlay(background string) string {
+	// Use add group picker if in that mode
+	if m.addingGroup {
+		return m.renderAddGroupOverlay(background)
+	}
+
+	// Use doc-based groups rendering
+	return m.renderDocGroupsOverlay(background)
+}
+
+// renderAddGroupOverlay renders the add group file picker
+func (m model) renderAddGroupOverlay(background string) string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	selectedStyle := lipgloss.NewStyle().Background(lipgloss.Color("205")).Foreground(lipgloss.Color("0"))
+	normalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	metaStyle := lipgloss.NewStyle().Faint(true)
 	separatorStyle := lipgloss.NewStyle().Faint(true)
 
-	// Build content as lines for scrolling support
 	var lines []string
-	var selectedLineIdx int // Track which line has the selected item
+	lines = append(lines, titleStyle.Render("Add Context Group"))
+	lines = append(lines, "")
+	lines = append(lines, metaStyle.Render("Select a markdown file to add as a context group:"))
+	lines = append(lines, "")
 
-	lines = append(lines, titleStyle.Render("Context Groups"))
-
-	if len(m.contextGroups) == 0 {
-		lines = append(lines, "")
-		lines = append(lines, lipgloss.NewStyle().Faint(true).Render("No groups defined"))
-		lines = append(lines, lipgloss.NewStyle().Faint(true).Render("Add groups in .context-groups.md"))
-	} else if len(m.layers) == 0 {
-		// Fallback to simple list if no layers defined
-		lines = append(lines, "")
-		for i, group := range m.contextGroups {
-			line := fmt.Sprintf("%s (%d files)", group.Name, len(group.Files))
-			if m.layerCursor == 0 && i == m.groupCursor {
-				selectedLineIdx = len(lines)
-				line = lipgloss.NewStyle().
-					Background(lipgloss.Color("205")).
-					Foreground(lipgloss.Color("0")).
-					Render(line)
-			} else {
-				line = lipgloss.NewStyle().Faint(true).Render(line)
-			}
-			lines = append(lines, line)
+	for i, file := range m.availableMdFiles {
+		isSelected := i == m.addGroupCursor
+		line := "  " + file
+		if isSelected {
+			lines = append(lines, selectedStyle.Render(line))
+		} else {
+			lines = append(lines, normalStyle.Render(line))
 		}
+	}
+
+	// Scrolling
+	maxHeight := m.height - 12
+	if maxHeight < 5 {
+		maxHeight = 5
+	}
+
+	totalLines := len(lines)
+	scrollOffset := m.addGroupScroll
+
+	maxScroll := totalLines - maxHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	var content strings.Builder
+	endIdx := scrollOffset + maxHeight
+	if endIdx > totalLines {
+		endIdx = totalLines
+	}
+
+	if scrollOffset > 0 {
+		content.WriteString(separatorStyle.Render("  ▲ more above"))
+		content.WriteString("\n")
+	}
+
+	for i := scrollOffset; i < endIdx; i++ {
+		content.WriteString(lines[i])
+		content.WriteString("\n")
+	}
+
+	if endIdx < totalLines {
+		content.WriteString(separatorStyle.Render("  ▼ more below"))
+	}
+
+	content.WriteString("\n")
+	content.WriteString(metaStyle.Render("[j/k] navigate  [enter] add  [esc] cancel"))
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Padding(1, 2).
+		Width(70).
+		MaxHeight(m.height - 4)
+
+	groupsBox := boxStyle.Render(content.String())
+
+	return lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		groupsBox,
+	)
+}
+
+// renderDocGroupsOverlay renders the v2 documentation-first context groups as cards
+func (m model) renderDocGroupsOverlay(background string) string {
+	// Card width for description wrapping
+	cardWidth := 68
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	separatorStyle := lipgloss.NewStyle().Faint(true)
+	warningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	metaStyle := lipgloss.NewStyle().Faint(true)
+	copiedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("82"))
+
+	// Card styles
+	selectedCardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Padding(0, 1).
+		Width(cardWidth)
+
+	normalCardStyle := lipgloss.NewStyle().
+		Border(lipgloss.HiddenBorder()).
+		Padding(0, 1).
+		Width(cardWidth)
+
+	var lines []string
+
+	// Title with copy feedback
+	titleLine := titleStyle.Render("Context Groups")
+	if m.statusMessage != "" && strings.HasPrefix(m.statusMessage, "Copied:") {
+		titleLine += "  " + copiedStyle.Render(m.statusMessage)
+	}
+	lines = append(lines, titleLine)
+	lines = append(lines, "")
+
+	// Supergroup gallery navigation - show prev | current | next
+	if m.docRegistry != nil && len(m.docRegistry.Supergroups) > 0 {
+		numSupergroups := len(m.docRegistry.Supergroups)
+		sgIdx := m.selectedSupergroup
+		if sgIdx < 0 {
+			sgIdx = 0
+		}
+		if sgIdx >= numSupergroups {
+			sgIdx = numSupergroups - 1
+		}
+
+		// Get prev, current, next supergroups (with wraparound)
+		prevIdx := (sgIdx - 1 + numSupergroups) % numSupergroups
+		nextIdx := (sgIdx + 1) % numSupergroups
+
+		prevSg := m.docRegistry.Supergroups[prevIdx]
+		currSg := m.docRegistry.Supergroups[sgIdx]
+		nextSg := m.docRegistry.Supergroups[nextIdx]
+
+		currCount := len(m.docRegistry.BySuper[currSg.ID])
+
+		// Styles
+		fadedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+		arrowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+		// Build gallery: ◀ PrevName  |  CurrentName (count)  |  NextName ▶
+		prevText := fadedStyle.Render(fmt.Sprintf("◀ %s", prevSg.Name))
+		currText := activeStyle.Render(fmt.Sprintf("%s (%d)", currSg.Name, currCount))
+		nextText := fadedStyle.Render(fmt.Sprintf("%s ▶", nextSg.Name))
+		divider := arrowStyle.Render("  │  ")
+
+		navLine := prevText + divider + currText + divider + nextText
+
+		// Center the navigation bar
+		centeredNav := lipgloss.NewStyle().Width(cardWidth).Align(lipgloss.Center).Render(navLine)
+		lines = append(lines, centeredNav)
+		lines = append(lines, "")
+		lines = append(lines, separatorStyle.Render("────────────────────────────────────────────────────────────────"))
+		lines = append(lines, "")
+	}
+
+	// Get groups for selected supergroup
+	groups := m.getGroupsForSelectedSupergroup()
+
+	if m.docRegistry == nil || len(m.docRegistry.Groups) == 0 {
+		lines = append(lines, metaStyle.Render("No context groups defined yet."))
+		lines = append(lines, "")
+		lines = append(lines, metaStyle.Render("Press 'a' to add a markdown file as a context group."))
+	} else if len(groups) == 0 {
+		lines = append(lines, metaStyle.Render("No groups in this category."))
+		lines = append(lines, "")
+		lines = append(lines, metaStyle.Render("Use h/l to switch categories, or 'a' to add a group."))
 	} else {
-		// Swimlane view
-		layerNameStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("105"))
-		selectedStyle := lipgloss.NewStyle().Background(lipgloss.Color("205")).Foreground(lipgloss.Color("0"))
-		normalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-		childStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+		// Render each group as a card
+		for groupIdx, group := range groups {
+			isSelected := groupIdx == m.docGroupCursor
 
-		// Build parent->children map for indentation
-		childrenOf := make(map[string][]string)
-		for _, g := range m.contextGroups {
-			if g.Parent != "" {
-				childrenOf[g.Parent] = append(childrenOf[g.Parent], g.Name)
-			}
-		}
+			// Build card content
+			var cardLines []string
 
-		for layerIdx, layer := range m.layers {
-			groups := m.layerGroups[layer.ID]
-			if len(groups) == 0 {
-				continue
+			// Selection indicator
+			selectionPrefix := "  "
+			if m.selectedGroups[group.FilePath] {
+				selectionPrefix = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Render("✓ ")
 			}
 
-			lines = append(lines, separatorStyle.Render("─────────────────────────────────────────────────"))
-			lines = append(lines, layerNameStyle.Render(layer.Name))
+			// Title line with status indicators
+			titleLine := selectionPrefix + lipgloss.NewStyle().Bold(true).Render(group.Name)
 
-			// Render groups, with children indented under parents
-			rendered := make(map[string]bool)
-			groupIdx := 0
-			for _, group := range groups {
-				if rendered[group.Name] {
-					continue
+			// Status badge
+			statusBadge := ""
+			if group.Status != "" {
+				statusColor := "244" // gray default
+				switch group.Status {
+				case "Active":
+					statusColor = "82" // green
+				case "Deprecated":
+					statusColor = "196" // red
+				case "Experimental":
+					statusColor = "214" // orange
+				case "Planned":
+					statusColor = "105" // purple
 				}
-				// Skip if this is a child (will be rendered under parent)
-				if group.Parent != "" {
-					continue
-				}
+				statusBadge = lipgloss.NewStyle().
+					Foreground(lipgloss.Color(statusColor)).
+					Render(" [" + group.Status + "]")
+			}
 
-				// Render parent group
-				isSelected := layerIdx == m.layerCursor && groupIdx == m.groupCursor
-				line := fmt.Sprintf("  [%s]", group.Name)
-				if isSelected {
-					selectedLineIdx = len(lines)
-					lines = append(lines, selectedStyle.Render(line))
-				} else {
-					lines = append(lines, normalStyle.Render(line))
-				}
-				rendered[group.Name] = true
-				groupIdx++
+			// Issue indicators
+			var indicators []string
+			if len(group.MissingFields) > 0 {
+				indicators = append(indicators, warningStyle.Render(" ⚠ incomplete"))
+			}
+			if len(group.BrokenKeyFiles) > 0 {
+				indicators = append(indicators, errorStyle.Render(" ✗ broken refs"))
+			}
+			if group.IsStale {
+				indicators = append(indicators, staleStyle.Render(" ○ stale"))
+			}
 
-				// Render children indented
-				for _, childName := range childrenOf[group.Name] {
-					// Find child group
-					for _, g := range groups {
-						if g.Name == childName {
-							isChildSelected := layerIdx == m.layerCursor && groupIdx == m.groupCursor
-							childLine := fmt.Sprintf("    ↳ [%s]", g.Name)
-							if isChildSelected {
-								selectedLineIdx = len(lines)
-								lines = append(lines, selectedStyle.Render(childLine))
-							} else {
-								lines = append(lines, childStyle.Render(childLine))
-							}
-							rendered[childName] = true
-							groupIdx++
-							break
-						}
-					}
+			cardLines = append(cardLines, titleLine+statusBadge+strings.Join(indicators, ""))
+
+			// Filepath - show below title for clarity
+			cardLines = append(cardLines, metaStyle.Render(group.FilePath))
+
+			// Description - word wrap to card width
+			if group.Description != "" {
+				desc := group.Description
+				wrapped := wrapText(desc, cardWidth-4)
+				for _, line := range wrapped {
+					cardLines = append(cardLines, descStyle.Render(line))
 				}
 			}
 
-			// Render any remaining groups (children without parents in this layer)
-			for _, group := range groups {
-				if rendered[group.Name] {
-					continue
-				}
-				isSelected := layerIdx == m.layerCursor && groupIdx == m.groupCursor
-				line := fmt.Sprintf("  [%s]", group.Name)
-				if isSelected {
-					selectedLineIdx = len(lines)
-					lines = append(lines, selectedStyle.Render(line))
-				} else {
-					lines = append(lines, normalStyle.Render(line))
-				}
-				rendered[group.Name] = true
-				groupIdx++
+			// Key files count and token estimate
+			var metaParts []string
+			if len(group.KeyFiles) > 0 {
+				metaParts = append(metaParts, fmt.Sprintf("%d key files", len(group.KeyFiles)))
+			}
+			if group.TokenEstimate > 0 {
+				metaParts = append(metaParts, fmt.Sprintf("~%d tokens", group.TokenEstimate))
+			}
+			if len(metaParts) > 0 {
+				cardLines = append(cardLines, metaStyle.Render(strings.Join(metaParts, " · ")))
+			}
+
+			// Render the card
+			cardContent := strings.Join(cardLines, "\n")
+			var renderedCard string
+			if isSelected {
+				renderedCard = selectedCardStyle.Render(cardContent)
+			} else {
+				renderedCard = normalCardStyle.Render(cardContent)
+			}
+
+			// Add card lines
+			for _, line := range strings.Split(renderedCard, "\n") {
+				lines = append(lines, line)
 			}
 		}
 	}
 
-	// Calculate max height for scrollable content
-	// Account for: border(2) + padding(2) + scroll indicators(2) + details(3) + footer(1) + buffer(2)
-	maxContentHeight := m.height - 16
-	if maxContentHeight < 8 {
-		maxContentHeight = 8
+	// Calculate scrolling
+	maxContentHeight := m.height - 8
+	if maxContentHeight < 10 {
+		maxContentHeight = 10
 	}
 
-	// Use stored scroll offset (keyboard navigation maintains visibility via ensureGroupSelectionVisible)
 	totalLines := len(lines)
 	scrollOffset := m.groupsScrollOffset
 
-	// Clamp scroll offset to valid range
 	maxScroll := totalLines - maxContentHeight
 	if maxScroll < 0 {
 		maxScroll = 0
@@ -456,9 +593,6 @@ func (m model) renderGroupsOverlay(background string) string {
 		scrollOffset = 0
 	}
 
-	// Silence unused variable warning (selectedLineIdx used for highlighting)
-	_ = selectedLineIdx
-
 	// Build visible content
 	var content strings.Builder
 	endIdx := scrollOffset + maxContentHeight
@@ -466,7 +600,6 @@ func (m model) renderGroupsOverlay(background string) string {
 		endIdx = totalLines
 	}
 
-	// Add scroll indicator at top if scrolled
 	if scrollOffset > 0 {
 		content.WriteString(separatorStyle.Render("  ▲ more above"))
 		content.WriteString("\n")
@@ -477,54 +610,76 @@ func (m model) renderGroupsOverlay(background string) string {
 		content.WriteString("\n")
 	}
 
-	// Add scroll indicator at bottom if more content
 	if endIdx < totalLines {
 		content.WriteString(separatorStyle.Render("  ▼ more below"))
-		content.WriteString("\n")
-	}
-
-	// Show selected group details (compact, single line each)
-	selectedGroup := m.getSelectedGroup()
-	if selectedGroup != nil {
-		content.WriteString(separatorStyle.Render("─────────────────────────────────────────────────"))
-		content.WriteString("\n")
-		detailStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-		content.WriteString(detailStyle.Render(fmt.Sprintf("%d files", len(selectedGroup.Files))))
-		if len(selectedGroup.Tags) > 0 {
-			content.WriteString(detailStyle.Render("  tags: " + strings.Join(selectedGroup.Tags, ", ")))
-		}
-		content.WriteString("\n")
-		if selectedGroup.Description != "" {
-			// Truncate description to fit on one line
-			desc := selectedGroup.Description
-			if len(desc) > 48 {
-				desc = desc[:45] + "..."
-			}
-			descStyle := lipgloss.NewStyle().Faint(true)
-			content.WriteString(descStyle.Render(desc))
-			content.WriteString("\n")
-		}
 	}
 
 	content.WriteString("\n")
-	content.WriteString(lipgloss.NewStyle().Faint(true).Render("[j/k] navigate  [enter/c] copy  [click] copy  [esc] close"))
+	// Footer with status message or selection count
+	footerText := "[h/l] category  [j/k] nav  [space] select  [c] copy  [a] add  [d] remove  [p] prompt  [esc] close"
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 5*time.Second {
+		// Show status message (copy feedback, etc.)
+		content.WriteString(statusStyle.Render(m.statusMessage))
+		content.WriteString("  ")
+	} else if len(m.selectedGroups) > 0 {
+		// Show selection count when no status message
+		content.WriteString(statusStyle.Render(fmt.Sprintf("%d selected  ", len(m.selectedGroups))))
+	}
+	content.WriteString(metaStyle.Render(footerText))
 
-	// Style the box with max height
+	// Use fixed height for consistent overlay position
+	fixedHeight := m.height - 6
+	if fixedHeight < 15 {
+		fixedHeight = 15
+	}
+
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("205")).
 		Padding(1, 2).
-		Width(55).
-		MaxHeight(m.height - 4)
+		Width(cardWidth + 8).
+		Height(fixedHeight)
 
 	groupsBox := boxStyle.Render(content.String())
 
-	// Center the box
 	return lipgloss.Place(
 		m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
 		groupsBox,
 	)
+}
+
+// wrapText wraps text to the specified width
+func wrapText(text string, width int) []string {
+	if width <= 0 {
+		return []string{text}
+	}
+
+	var lines []string
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return lines
+	}
+
+	currentLine := words[0]
+	for _, word := range words[1:] {
+		if len(currentLine)+1+len(word) <= width {
+			currentLine += " " + word
+		} else {
+			lines = append(lines, currentLine)
+			currentLine = word
+		}
+	}
+	lines = append(lines, currentLine)
+
+	// Limit to 3 lines max
+	if len(lines) > 3 {
+		lines = lines[:3]
+		lines[2] = lines[2][:min(len(lines[2]), width-3)] + "..."
+	}
+
+	return lines
 }
 
 // renderBranchStatus returns the git branch name with ahead/behind indicators

@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -26,20 +25,12 @@ func copyToClipboard(path string) error {
 	return clipboard.WriteAll(formatted)
 }
 
-// copyGroupToClipboard copies multiple file paths to clipboard
-// Each path is prefixed with @ and separated by spaces
-func copyGroupToClipboard(rootPath string, group ContextGroup) error {
+// copyRawToClipboard copies raw text to clipboard without any formatting
+func copyRawToClipboard(text string) error {
 	if clipboard.Unsupported {
 		return ErrClipboardUnavailable
 	}
-
-	var refs []string
-	for _, relPath := range group.Files {
-		fullPath := filepath.Join(rootPath, relPath)
-		refs = append(refs, "@"+fullPath)
-	}
-
-	return clipboard.WriteAll(strings.Join(refs, " "))
+	return clipboard.WriteAll(text)
 }
 
 // copySelection copies the selected lines from preview to clipboard
@@ -78,4 +69,15 @@ func (m model) copySelection() error {
 	}
 
 	return clipboard.WriteAll(strings.Join(cleanLines, "\n"))
+}
+
+// copyDocGroupToClipboard copies the markdown content of a doc group to clipboard
+// This copies the full documentation for use as AI context
+func copyDocGroupToClipboard(group DocContextGroup) error {
+	if clipboard.Unsupported {
+		return ErrClipboardUnavailable
+	}
+
+	// Copy the raw markdown content of the documentation file
+	return clipboard.WriteAll(group.RawContent)
 }
