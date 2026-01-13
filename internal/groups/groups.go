@@ -10,12 +10,12 @@ import (
 	"strings"
 )
 
-// DocContextGroup represents a documentation-first context group (v2)
-// The markdown file itself IS the context group
-type DocContextGroup struct {
+// ContextDoc represents a documentation-first context doc (v2)
+// The markdown file itself IS the context doc
+type ContextDoc struct {
 	Name        string   // Derived from filename or H1 heading
 	FilePath    string   // Path to the markdown file (relative to root)
-	Supergroup  string   // Category: Feature, Documentation, Data Layer, etc.
+	Category    string   // Category: Feature, Documentation, Data Layer, etc.
 	Status      string   // Active, Deprecated, Experimental, Planned
 	Related     []string // Paths to related documentation files
 	Description string   // Content of the Description section
@@ -34,37 +34,37 @@ type DocContextGroup struct {
 	LastCodeModified int64    // Unix timestamp of most recent key file change
 }
 
-// Supergroup represents a category for organizing doc groups
-type Supergroup struct {
+// Category represents a category for organizing context docs
+type Category struct {
 	ID   string // lowercase identifier
 	Name string // Display name
 }
 
-// DefaultSupergroups returns the default set of supergroups
-func DefaultSupergroups() []Supergroup {
-	return []Supergroup{
+// DefaultCategories returns the default set of categories
+func DefaultCategories() []Category {
+	return []Category{
 		{ID: "meta", Name: "Meta"},
 		{ID: "feature", Name: "Feature"},
 		{ID: "miscellaneous", Name: "Miscellaneous"},
 	}
 }
 
-// DocGroupRegistry holds the v2 context groups system state
-type DocGroupRegistry struct {
-	Supergroups []Supergroup                 // Available supergroups (defaults + custom)
-	Groups      []DocContextGroup            // All registered doc groups
-	BySuper     map[string][]DocContextGroup // Groups organized by supergroup ID
+// ContextDocRegistry holds the v2 context docs system state
+type ContextDocRegistry struct {
+	Categories []Category              // Available categories (defaults + custom)
+	Docs       []ContextDoc            // All registered context docs
+	ByCategory map[string][]ContextDoc // Docs organized by category ID
 }
 
-// ParseDocContextGroup parses a markdown file and extracts context group metadata
-func ParseDocContextGroup(rootPath, filePath string) (*DocContextGroup, error) {
+// ParseContextDoc parses a markdown file and extracts context doc metadata
+func ParseContextDoc(rootPath, filePath string) (*ContextDoc, error) {
 	fullPath := filepath.Join(rootPath, filePath)
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
 		return nil, err
 	}
 
-	group := &DocContextGroup{
+	doc := &ContextDoc{
 		FilePath:      filePath,
 		RawContent:    string(content),
 		TokenEstimate: len(content) / 4, // Rough approximation for English text
@@ -73,7 +73,7 @@ func ParseDocContextGroup(rootPath, filePath string) (*DocContextGroup, error) {
 	// Get file modification time
 	info, err := os.Stat(fullPath)
 	if err == nil {
-		group.LastDocModified = info.ModTime().Unix()
+		doc.LastDocModified = info.ModTime().Unix()
 	}
 
 	lines := strings.Split(string(content), "\n")
@@ -86,7 +86,7 @@ func ParseDocContextGroup(rootPath, filePath string) (*DocContextGroup, error) {
 	inCodeBlock := false
 
 	// Regex patterns for inline metadata
-	supergroupRe := regexp.MustCompile(`(?i)^\*\*Supergroup:\*\*\s*(.+)$`)
+	categoryRe := regexp.MustCompile(`(?i)^\*\*Category:\*\*\s*(.+)$`)
 	statusRe := regexp.MustCompile(`(?i)^\*\*Status:\*\*\s*(.+)$`)
 	relatedRe := regexp.MustCompile(`(?i)^\*\*Related:\*\*\s*(.+)$`)
 
@@ -103,18 +103,18 @@ func ParseDocContextGroup(rootPath, filePath string) (*DocContextGroup, error) {
 		}
 
 		// Extract H1 as name (fallback to filename)
-		if strings.HasPrefix(trimmed, "# ") && group.Name == "" {
-			group.Name = strings.TrimPrefix(trimmed, "# ")
+		if strings.HasPrefix(trimmed, "# ") && doc.Name == "" {
+			doc.Name = strings.TrimPrefix(trimmed, "# ")
 			continue
 		}
 
 		// Parse inline metadata (bold field format)
-		if match := supergroupRe.FindStringSubmatch(trimmed); match != nil {
-			group.Supergroup = strings.TrimSpace(match[1])
+		if match := categoryRe.FindStringSubmatch(trimmed); match != nil {
+			doc.Category = strings.TrimSpace(match[1])
 			continue
 		}
 		if match := statusRe.FindStringSubmatch(trimmed); match != nil {
-			group.Status = strings.TrimSpace(match[1])
+			doc.Status = strings.TrimSpace(match[1])
 			continue
 		}
 		if match := relatedRe.FindStringSubmatch(trimmed); match != nil {
@@ -123,7 +123,7 @@ func ParseDocContextGroup(rootPath, filePath string) (*DocContextGroup, error) {
 			for _, r := range strings.Split(relatedStr, ",") {
 				r = strings.TrimSpace(r)
 				if r != "" {
-					group.Related = append(group.Related, r)
+					doc.Related = append(doc.Related, r)
 				}
 			}
 			continue
@@ -174,62 +174,62 @@ func ParseDocContextGroup(rootPath, filePath string) (*DocContextGroup, error) {
 	}
 
 	// Set parsed values
-	group.Description = strings.Join(descriptionLines, " ")
-	group.KeyFiles = keyFileLines
-	group.OutOfScope = strings.Join(outOfScopeLines, " ")
+	doc.Description = strings.Join(descriptionLines, " ")
+	doc.KeyFiles = keyFileLines
+	doc.OutOfScope = strings.Join(outOfScopeLines, " ")
 
 	// Fallback name to filename
-	if group.Name == "" {
+	if doc.Name == "" {
 		base := filepath.Base(filePath)
-		group.Name = strings.TrimSuffix(base, filepath.Ext(base))
+		doc.Name = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 
 	// Validate required fields
-	group.MissingFields = validateDocGroup(group)
+	doc.MissingFields = validateContextDoc(doc)
 
-	return group, nil
+	return doc, nil
 }
 
-// validateDocGroup checks for missing required fields
-func validateDocGroup(group *DocContextGroup) []string {
+// validateContextDoc checks for missing required fields
+func validateContextDoc(doc *ContextDoc) []string {
 	var missing []string
-	if group.Supergroup == "" {
-		missing = append(missing, "Supergroup")
+	if doc.Category == "" {
+		missing = append(missing, "Category")
 	}
-	if group.Status == "" {
+	if doc.Status == "" {
 		missing = append(missing, "Status")
 	}
-	if group.Description == "" {
+	if doc.Description == "" {
 		missing = append(missing, "Description")
 	}
-	if len(group.KeyFiles) == 0 {
+	if len(doc.KeyFiles) == 0 {
 		missing = append(missing, "Key Files")
 	}
 	return missing
 }
 
 // ValidateKeyFiles checks which key files exist and returns broken paths
-func (g *DocContextGroup) ValidateKeyFiles(rootPath string) []string {
+func (d *ContextDoc) ValidateKeyFiles(rootPath string) []string {
 	var broken []string
-	for _, kf := range g.KeyFiles {
+	for _, kf := range d.KeyFiles {
 		fullPath := filepath.Join(rootPath, kf)
 		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 			broken = append(broken, kf)
 		}
 	}
-	g.BrokenKeyFiles = broken
+	d.BrokenKeyFiles = broken
 	return broken
 }
 
-// LoadDocGroupRegistry loads the v2 context groups from .context-groups.md registry
-func LoadDocGroupRegistry(rootPath string) (*DocGroupRegistry, error) {
-	registry := &DocGroupRegistry{
-		Supergroups: DefaultSupergroups(),
-		Groups:      []DocContextGroup{},
-		BySuper:     make(map[string][]DocContextGroup),
+// LoadContextDocRegistry loads the v2 context docs from .context-docs.md registry
+func LoadContextDocRegistry(rootPath string) (*ContextDocRegistry, error) {
+	registry := &ContextDocRegistry{
+		Categories: DefaultCategories(),
+		Docs:       []ContextDoc{},
+		ByCategory: make(map[string][]ContextDoc),
 	}
 
-	registryPath := filepath.Join(rootPath, ".context-groups.md")
+	registryPath := filepath.Join(rootPath, ".context-docs.md")
 	file, err := os.Open(registryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -241,23 +241,23 @@ func LoadDocGroupRegistry(rootPath string) (*DocGroupRegistry, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	inActiveGroups := false
+	inActiveDocs := false
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
 		// Detect sections
-		if strings.HasPrefix(line, "## Active Groups") {
-			inActiveGroups = true
+		if strings.HasPrefix(line, "## Active Docs") {
+			inActiveDocs = true
 			continue
 		}
 		if strings.HasPrefix(line, "## ") {
-			inActiveGroups = false
+			inActiveDocs = false
 			continue
 		}
 
-		// Parse active group entries: "- path/to/doc.md (Supergroup, Status)"
-		if inActiveGroups && strings.HasPrefix(line, "- ") {
+		// Parse active doc entries: "- path/to/doc.md (Category, Status)"
+		if inActiveDocs && strings.HasPrefix(line, "- ") {
 			entry := strings.TrimPrefix(line, "- ")
 			// Extract path (before parentheses)
 			parenIdx := strings.Index(entry, "(")
@@ -270,61 +270,61 @@ func LoadDocGroupRegistry(rootPath string) (*DocGroupRegistry, error) {
 
 			if docPath != "" {
 				// Parse the document
-				group, err := ParseDocContextGroup(rootPath, docPath)
+				doc, err := ParseContextDoc(rootPath, docPath)
 				if err != nil {
 					// File doesn't exist or can't be read - create placeholder
-					group = &DocContextGroup{
+					doc = &ContextDoc{
 						Name:          filepath.Base(docPath),
 						FilePath:      docPath,
 						MissingFields: []string{"File not found"},
 					}
 				} else {
 					// Validate key file paths exist
-					group.ValidateKeyFiles(rootPath)
+					doc.ValidateKeyFiles(rootPath)
 					// Check staleness via git history
-					group.CheckStaleness(rootPath)
+					doc.CheckStaleness(rootPath)
 				}
-				registry.Groups = append(registry.Groups, *group)
+				registry.Docs = append(registry.Docs, *doc)
 			}
 		}
 	}
 
-	// Auto-discover supergroups from parsed groups
-	// Collect unique supergroups that are not defaults
-	usedSupergroups := make(map[string]string) // ID -> Name
-	for _, g := range registry.Groups {
-		if g.Supergroup == "" {
+	// Auto-discover categories from parsed docs
+	// Collect unique categories that are not defaults
+	usedCategories := make(map[string]string) // ID -> Name
+	for _, d := range registry.Docs {
+		if d.Category == "" {
 			continue
 		}
-		sgID := strings.ToLower(strings.ReplaceAll(g.Supergroup, " ", "-"))
+		catID := strings.ToLower(strings.ReplaceAll(d.Category, " ", "-"))
 		// Check if it's already a default
 		isDefault := false
-		for _, dsg := range DefaultSupergroups() {
-			if strings.EqualFold(dsg.ID, sgID) || strings.EqualFold(dsg.Name, g.Supergroup) {
+		for _, dc := range DefaultCategories() {
+			if strings.EqualFold(dc.ID, catID) || strings.EqualFold(dc.Name, d.Category) {
 				isDefault = true
 				break
 			}
 		}
 		if !isDefault {
-			usedSupergroups[sgID] = g.Supergroup
+			usedCategories[catID] = d.Category
 		}
 	}
 
-	// Add discovered custom supergroups
-	for id, name := range usedSupergroups {
-		registry.Supergroups = append(registry.Supergroups, Supergroup{
+	// Add discovered custom categories
+	for id, name := range usedCategories {
+		registry.Categories = append(registry.Categories, Category{
 			ID:   id,
 			Name: name,
 		})
 	}
 
-	// Organize by supergroup
-	for _, g := range registry.Groups {
-		sgID := strings.ToLower(strings.ReplaceAll(g.Supergroup, " ", "-"))
-		if sgID == "" {
-			sgID = "miscellaneous"
+	// Organize by category
+	for _, d := range registry.Docs {
+		catID := strings.ToLower(strings.ReplaceAll(d.Category, " ", "-"))
+		if catID == "" {
+			catID = "miscellaneous"
 		}
-		registry.BySuper[sgID] = append(registry.BySuper[sgID], g)
+		registry.ByCategory[catID] = append(registry.ByCategory[catID], d)
 	}
 
 	return registry, nil
@@ -363,19 +363,19 @@ func FindMarkdownFiles(rootPath string) ([]string, error) {
 }
 
 // GenerateStructureTemplate returns a template for missing sections
-func GenerateStructureTemplate(group *DocContextGroup) string {
+func GenerateStructureTemplate(doc *ContextDoc) string {
 	var sb strings.Builder
 
 	// Only add missing sections
-	needsSupergroup := false
+	needsCategory := false
 	needsStatus := false
 	needsDescription := false
 	needsKeyFiles := false
 
-	for _, field := range group.MissingFields {
+	for _, field := range doc.MissingFields {
 		switch field {
-		case "Supergroup":
-			needsSupergroup = true
+		case "Category":
+			needsCategory = true
 		case "Status":
 			needsStatus = true
 		case "Description":
@@ -385,10 +385,10 @@ func GenerateStructureTemplate(group *DocContextGroup) string {
 		}
 	}
 
-	if needsSupergroup || needsStatus {
+	if needsCategory || needsStatus {
 		sb.WriteString("\n<!-- Add after the H1 title -->\n")
-		if needsSupergroup {
-			sb.WriteString("**Supergroup:** Feature\n")
+		if needsCategory {
+			sb.WriteString("**Category:** Feature\n")
 		}
 		if needsStatus {
 			sb.WriteString("**Status:** Active\n")
@@ -411,22 +411,22 @@ func GenerateStructureTemplate(group *DocContextGroup) string {
 }
 
 // GenerateClaudePrompt returns a prompt to help Claude structure the doc
-func GenerateClaudePrompt(group *DocContextGroup) string {
+func GenerateClaudePrompt(doc *ContextDoc) string {
 	var sb strings.Builder
 
-	sb.WriteString("Please help me structure this documentation file for use as a context group.\n\n")
+	sb.WriteString("Please help me structure this documentation file for use as a context doc.\n\n")
 	sb.WriteString("The file needs the following sections/metadata:\n\n")
 
-	for _, field := range group.MissingFields {
+	for _, field := range doc.MissingFields {
 		switch field {
-		case "Supergroup":
-			sb.WriteString("- **Supergroup:** (add after H1 title) - Category like: Feature, Documentation, Data Layer, Architecture, Personal Context, Reference Material\n")
+		case "Category":
+			sb.WriteString("- **Category:** (add after H1 title) - Category like: Feature, Documentation, Data Layer, Architecture, Personal Context, Reference Material\n")
 		case "Status":
 			sb.WriteString("- **Status:** (add after H1 title) - One of: Active, Deprecated, Experimental, Planned\n")
 		case "Description":
 			sb.WriteString("- ## Description section - High-level explanation of purpose and architecture\n")
 		case "Key Files":
-			sb.WriteString("- ## Key Files section - List of code entry points (not exhaustive, just key files)\n")
+			sb.WriteString("- ## Key Files section - List format required (not tables). Each line: \"- path/to/file - description\"\n")
 		}
 	}
 
@@ -437,9 +437,9 @@ func GenerateClaudePrompt(group *DocContextGroup) string {
 	return sb.String()
 }
 
-// CheckStaleness checks if a doc group is stale by comparing git history
+// CheckStaleness checks if a context doc is stale by comparing git history
 // A doc is stale if any of its key files have been modified more recently than the doc
-func (g *DocContextGroup) CheckStaleness(rootPath string) {
+func (d *ContextDoc) CheckStaleness(rootPath string) {
 	// Get the git repo root
 	cmd := exec.Command("git", "-C", rootPath, "rev-parse", "--show-toplevel")
 	output, err := cmd.Output()
@@ -449,25 +449,25 @@ func (g *DocContextGroup) CheckStaleness(rootPath string) {
 	gitRoot := strings.TrimSpace(string(output))
 
 	// Get last commit time for the doc file
-	docLastCommit := getGitLastCommitTime(gitRoot, g.FilePath)
+	docLastCommit := getGitLastCommitTime(gitRoot, d.FilePath)
 	if docLastCommit == 0 {
 		return // File not tracked or no history
 	}
-	g.LastDocModified = docLastCommit
+	d.LastDocModified = docLastCommit
 
 	// Check each key file's last commit time
 	var latestKeyFileTime int64
-	for _, kf := range g.KeyFiles {
+	for _, kf := range d.KeyFiles {
 		kfTime := getGitLastCommitTime(gitRoot, kf)
 		if kfTime > latestKeyFileTime {
 			latestKeyFileTime = kfTime
 		}
 	}
-	g.LastCodeModified = latestKeyFileTime
+	d.LastCodeModified = latestKeyFileTime
 
 	// Mark as stale if key files changed after doc
 	if latestKeyFileTime > docLastCommit {
-		g.IsStale = true
+		d.IsStale = true
 	}
 }
 
@@ -487,55 +487,55 @@ func getGitLastCommitTime(gitRoot, filePath string) int64 {
 	return timestamp
 }
 
-// SaveDocGroupRegistry writes the registry back to .context-groups.md
-func SaveDocGroupRegistry(rootPath string, registry *DocGroupRegistry) error {
+// SaveContextDocRegistry writes the registry back to .context-docs.md
+func SaveContextDocRegistry(rootPath string, registry *ContextDocRegistry) error {
 	var sb strings.Builder
 
-	sb.WriteString("# Context Groups\n\n")
-	sb.WriteString("This project uses structured documentation as context groups.\n")
-	sb.WriteString("Each group is a markdown file with metadata: Supergroup, Status,\n")
+	sb.WriteString("# Context Docs\n\n")
+	sb.WriteString("This project uses structured documentation as context docs.\n")
+	sb.WriteString("Each doc is a markdown file with metadata: Category, Status,\n")
 	sb.WriteString("Description, Key Files, and optionally Related and Out of Scope.\n\n")
-	sb.WriteString("Supergroups are auto-discovered from markdown files. To create a custom\n")
-	sb.WriteString("supergroup, just set `**Supergroup:** YourCategory` in any markdown file.\n\n")
+	sb.WriteString("Categories are auto-discovered from markdown files. To create a custom\n")
+	sb.WriteString("category, just set `**Category:** YourCategory` in any markdown file.\n\n")
 
-	// Collect supergroups that are actually in use
-	usedSupergroups := make(map[string]bool)
-	for _, g := range registry.Groups {
-		if g.Supergroup != "" {
-			sgID := strings.ToLower(strings.ReplaceAll(g.Supergroup, " ", "-"))
-			usedSupergroups[sgID] = true
+	// Collect categories that are actually in use
+	usedCategories := make(map[string]bool)
+	for _, d := range registry.Docs {
+		if d.Category != "" {
+			catID := strings.ToLower(strings.ReplaceAll(d.Category, " ", "-"))
+			usedCategories[catID] = true
 		}
 	}
 
-	sb.WriteString("## Supergroups (auto-discovered)\n\n")
-	for _, sg := range registry.Supergroups {
-		// Only list supergroups that have groups or are defaults
+	sb.WriteString("## Categories (auto-discovered)\n\n")
+	for _, cat := range registry.Categories {
+		// Only list categories that have docs or are defaults
 		isDefault := false
-		for _, dsg := range DefaultSupergroups() {
-			if dsg.ID == sg.ID {
+		for _, dc := range DefaultCategories() {
+			if dc.ID == cat.ID {
 				isDefault = true
 				break
 			}
 		}
-		if isDefault || usedSupergroups[sg.ID] {
-			sb.WriteString("- " + sg.Name + "\n")
+		if isDefault || usedCategories[cat.ID] {
+			sb.WriteString("- " + cat.Name + "\n")
 		}
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString("## Active Groups\n\n")
-	for _, g := range registry.Groups {
-		status := g.Status
+	sb.WriteString("## Active Docs\n\n")
+	for _, d := range registry.Docs {
+		status := d.Status
 		if status == "" {
 			status = "?"
 		}
-		supergroup := g.Supergroup
-		if supergroup == "" {
-			supergroup = "?"
+		category := d.Category
+		if category == "" {
+			category = "?"
 		}
-		sb.WriteString("- " + g.FilePath + " (" + supergroup + ", " + status + ")\n")
+		sb.WriteString("- " + d.FilePath + " (" + category + ", " + status + ")\n")
 	}
 
-	registryPath := filepath.Join(rootPath, ".context-groups.md")
+	registryPath := filepath.Join(rootPath, ".context-docs.md")
 	return os.WriteFile(registryPath, []byte(sb.String()), 0644)
 }

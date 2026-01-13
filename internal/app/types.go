@@ -48,17 +48,17 @@ type Model struct {
 	searchCursor  int
 	allFiles      []string // Flat list of all file paths for searching
 
-	// Context groups (documentation-first)
-	docRegistry        *groups.DocGroupRegistry // Doc-based context groups
-	showingGroups      bool                     // True when groups overlay is visible
-	selectedSupergroup int                      // Index of selected supergroup (for filtering)
-	docGroupCursor     int                      // Selected group in current supergroup view
-	groupsScrollOffset int                      // Scroll offset for groups overlay
-	selectedGroups     map[string]bool          // Selected groups for multi-copy (keyed by filepath)
-	addingGroup        bool                     // True when in "add group" mode
-	availableMdFiles   []string                 // .md files available to add
-	addGroupCursor     int                      // Cursor in add group picker
-	addGroupScroll     int                      // Scroll offset in add group picker
+	// Context docs (documentation-first)
+	docRegistry        *groups.ContextDocRegistry // Doc-based context docs
+	showingDocs        bool                       // True when docs overlay is visible
+	selectedCategory   int                        // Index of selected category (for filtering)
+	docCursor          int                        // Selected doc in current category view
+	docsScrollOffset   int                        // Scroll offset for docs overlay
+	selectedDocs       map[string]bool            // Selected docs for multi-copy (keyed by filepath)
+	addingDoc          bool                       // True when in "add doc" mode
+	availableMdFiles   []string                   // .md files available to add
+	addDocCursor       int                        // Cursor in add doc picker
+	addDocScroll       int                        // Scroll offset in add doc picker
 
 	// File watcher
 	watcher *fsnotify.Watcher

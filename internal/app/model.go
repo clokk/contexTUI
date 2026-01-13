@@ -37,8 +37,8 @@ func NewModel(rootPath string) Model {
 	// Collect all files for searching
 	allFiles := CollectAllFiles(absPath)
 
-	// Load doc-based context groups
-	docRegistry, _ := groups.LoadDocGroupRegistry(absPath)
+	// Load doc-based context docs
+	docRegistry, _ := groups.LoadContextDocRegistry(absPath)
 
 	// Check for git repository and load git status
 	isGit, gitRoot := git.IsRepo(absPath)
@@ -73,9 +73,9 @@ func NewModel(rootPath string) Model {
 			}
 			return nil
 		})
-		// Explicitly watch .context-groups.md for auto-reload
-		contextGroupsPath := filepath.Join(absPath, ".context-groups.md")
-		watcher.Add(contextGroupsPath)
+		// Explicitly watch .context-docs.md for auto-reload
+		contextDocsPath := filepath.Join(absPath, ".context-docs.md")
+		watcher.Add(contextDocsPath)
 	}
 
 	return Model{
@@ -88,9 +88,9 @@ func NewModel(rootPath string) Model {
 		searchInput:  ti,
 		allFiles:     allFiles,
 		watcher:      watcher,
-		// Context groups
-		docRegistry:    docRegistry,
-		selectedGroups: make(map[string]bool),
+		// Context docs
+		docRegistry:  docRegistry,
+		selectedDocs: make(map[string]bool),
 		// Git integration
 		isGitRepo:      isGit,
 		gitRepoRoot:    gitRoot,
@@ -111,14 +111,14 @@ func CollectAllFiles(root string) []string {
 		if err != nil {
 			return nil
 		}
-		// Skip hidden files/dirs and common ignores (except .context-groups.md)
+		// Skip hidden files/dirs and common ignores (except .context-docs.md)
 		name := info.Name()
 		if strings.HasPrefix(name, ".") {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
-			// Always show .context-groups.md - it's part of contexTUI workflow
-			if name != ".context-groups.md" {
+			// Always show .context-docs.md - it's part of contexTUI workflow
+			if name != ".context-docs.md" {
 				return nil
 			}
 		}
@@ -148,8 +148,8 @@ func LoadDirectory(path string, depth int) []Entry {
 	}
 
 	for _, f := range files {
-		// Skip hidden files and common ignores (except .context-groups.md)
-		if strings.HasPrefix(f.Name(), ".") && f.Name() != ".context-groups.md" {
+		// Skip hidden files and common ignores (except .context-docs.md)
+		if strings.HasPrefix(f.Name(), ".") && f.Name() != ".context-docs.md" {
 			continue
 		}
 		if f.Name() == "node_modules" || f.Name() == "vendor" || f.Name() == "__pycache__" {

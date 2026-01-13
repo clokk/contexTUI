@@ -1,6 +1,6 @@
 # contexTUI Vision
 
-**Supergroup:** Meta
+**Category:** Meta
 **Status:** Active
 
 ## Description
@@ -93,7 +93,7 @@ Front-load context so Claude can execute, rather than making Claude search repea
 - Cross-platform
 - Excellent TUI library ecosystem
 
-### Why .context-groups.md?
+### Why .context-docs.md?
 
 - Human-readable, git-trackable
 - Shareable with team

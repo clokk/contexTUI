@@ -12,84 +12,95 @@ import (
 	"github.com/connorleisz/contexTUI/internal/groups"
 )
 
-// StructureNeededTag is inserted into files that need context group structuring
+// StructureNeededTag is inserted into files that need context doc structuring
 const StructureNeededTag = "<!-- contexTUI: structure-needed -->\n"
 
-// StructuringPrompt is copied when user presses 'p' in groups overlay
+// StructuringPrompt is copied when user presses 'p' in docs overlay
 const StructuringPrompt = `Find all markdown files in this project containing the comment:
 <!-- contexTUI: structure-needed -->
 
-For each file, read .context-groups.md to understand the required structure,
+For each file, read .context-docs.md to understand the required structure,
 then update the file to include:
-- **Supergroup:** (Meta, Feature, or custom category)
+- **Category:** (Meta, Feature, or custom category)
 - **Status:** Active
 - ## Description section
-- ## Key Files section
+- ## Key Files section (IMPORTANT: must use list format, not tables)
+
+Key Files format (required):
+` + "```" + `
+## Key Files
+
+- path/to/file.ts - Description of this entry point
+- another/file.go - Another key file
+` + "```" + `
+
+Each entry must start with "- " followed by the file path. Description after " - " is optional.
+Tables are NOT supported for Key Files.
 
 Remove the <!-- contexTUI: structure-needed --> tag after structuring.`
 
-// updateGroups handles the context groups overlay
-func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Handle add group mode separately
-	if m.addingGroup {
-		return m.updateAddGroup(msg)
+// updateDocs handles the context docs overlay
+func (m Model) updateDocs(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle add doc mode separately
+	if m.addingDoc {
+		return m.updateAddDoc(msg)
 	}
 
-	// Get groups for current supergroup
-	currentGroups := m.getGroupsForSelectedSupergroup()
-	totalGroups := len(currentGroups)
+	// Get docs for current category
+	currentDocs := m.getDocsForSelectedCategory()
+	totalDocs := len(currentDocs)
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
-			m.showingGroups = false
+			m.showingDocs = false
 			return m, nil
 
 		case "left", "h":
-			// Previous supergroup
-			if m.docRegistry != nil && len(m.docRegistry.Supergroups) > 0 {
-				m.selectedSupergroup--
-				if m.selectedSupergroup < 0 {
-					m.selectedSupergroup = len(m.docRegistry.Supergroups) - 1
+			// Previous category
+			if m.docRegistry != nil && len(m.docRegistry.Categories) > 0 {
+				m.selectedCategory--
+				if m.selectedCategory < 0 {
+					m.selectedCategory = len(m.docRegistry.Categories) - 1
 				}
-				m.docGroupCursor = 0
-				m.groupsScrollOffset = 0
+				m.docCursor = 0
+				m.docsScrollOffset = 0
 			}
 			return m, nil
 
 		case "right", "l":
-			// Next supergroup
-			if m.docRegistry != nil && len(m.docRegistry.Supergroups) > 0 {
-				m.selectedSupergroup++
-				if m.selectedSupergroup >= len(m.docRegistry.Supergroups) {
-					m.selectedSupergroup = 0
+			// Next category
+			if m.docRegistry != nil && len(m.docRegistry.Categories) > 0 {
+				m.selectedCategory++
+				if m.selectedCategory >= len(m.docRegistry.Categories) {
+					m.selectedCategory = 0
 				}
-				m.docGroupCursor = 0
-				m.groupsScrollOffset = 0
+				m.docCursor = 0
+				m.docsScrollOffset = 0
 			}
 			return m, nil
 
 		case "up", "k":
-			if m.docGroupCursor > 0 {
-				m.docGroupCursor--
-				m.ensureDocGroupVisible()
+			if m.docCursor > 0 {
+				m.docCursor--
+				m.ensureDocVisible()
 			}
 			return m, nil
 
 		case "down", "j":
-			if m.docGroupCursor < totalGroups-1 {
-				m.docGroupCursor++
-				m.ensureDocGroupVisible()
+			if m.docCursor < totalDocs-1 {
+				m.docCursor++
+				m.ensureDocVisible()
 			}
 			return m, nil
 
 		case "enter", "c":
-			// Copy selected groups (or current if none selected) as @filepath references
-			if len(m.selectedGroups) > 0 {
-				// Copy all selected groups - iterate directly over selectedGroups map
+			// Copy selected docs (or current if none selected) as @filepath references
+			if len(m.selectedDocs) > 0 {
+				// Copy all selected docs - iterate directly over selectedDocs map
 				var refs []string
-				for path := range m.selectedGroups {
+				for path := range m.selectedDocs {
 					refs = append(refs, "@"+path)
 				}
 				combined := strings.Join(refs, "\n")
@@ -99,16 +110,16 @@ func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMessage = fmt.Sprintf("Copied %d references", len(refs))
 				}
 				// Clear selections after copy
-				m.selectedGroups = make(map[string]bool)
+				m.selectedDocs = make(map[string]bool)
 				m.statusMessageTime = time.Now()
 				return m, ClearStatusAfter(5 * time.Second)
-			} else if m.docGroupCursor < totalGroups {
-				// Copy single current group as @filepath reference
-				group := currentGroups[m.docGroupCursor]
-				if err := clipboard.CopyFilePath(group.FilePath); err != nil {
+			} else if m.docCursor < totalDocs {
+				// Copy single current doc as @filepath reference
+				doc := currentDocs[m.docCursor]
+				if err := clipboard.CopyFilePath(doc.FilePath); err != nil {
 					m.statusMessage = "Clipboard unavailable"
 				} else {
-					m.statusMessage = fmt.Sprintf("Copied: @%s", group.FilePath)
+					m.statusMessage = fmt.Sprintf("Copied: @%s", doc.FilePath)
 				}
 				m.statusMessageTime = time.Now()
 				return m, ClearStatusAfter(5 * time.Second)
@@ -122,8 +133,8 @@ func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var available []string
 			existingPaths := make(map[string]bool)
 			if m.docRegistry != nil {
-				for _, g := range m.docRegistry.Groups {
-					existingPaths[g.FilePath] = true
+				for _, d := range m.docRegistry.Docs {
+					existingPaths[d.FilePath] = true
 				}
 			}
 			for _, f := range mdFiles {
@@ -137,9 +148,9 @@ func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, ClearStatusAfter(5 * time.Second)
 			}
 			m.availableMdFiles = available
-			m.addGroupCursor = 0
-			m.addGroupScroll = 0
-			m.addingGroup = true
+			m.addDocCursor = 0
+			m.addDocScroll = 0
+			m.addingDoc = true
 			return m, nil
 
 		case "p":
@@ -153,47 +164,47 @@ func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, ClearStatusAfter(5 * time.Second)
 
 		case "d", "x":
-			// Remove the selected group from registry
-			if m.docGroupCursor < totalGroups && m.docRegistry != nil {
-				group := currentGroups[m.docGroupCursor]
+			// Remove the selected doc from registry
+			if m.docCursor < totalDocs && m.docRegistry != nil {
+				doc := currentDocs[m.docCursor]
 
-				// Remove from Groups slice
-				for i, g := range m.docRegistry.Groups {
-					if g.FilePath == group.FilePath {
-						m.docRegistry.Groups = append(m.docRegistry.Groups[:i], m.docRegistry.Groups[i+1:]...)
+				// Remove from Docs slice
+				for i, d := range m.docRegistry.Docs {
+					if d.FilePath == doc.FilePath {
+						m.docRegistry.Docs = append(m.docRegistry.Docs[:i], m.docRegistry.Docs[i+1:]...)
 						break
 					}
 				}
 
-				// Remove from BySuper map
-				sgID := strings.ToLower(strings.ReplaceAll(group.Supergroup, " ", "-"))
-				if sgID == "" {
-					sgID = "miscellaneous"
+				// Remove from ByCategory map
+				catID := strings.ToLower(strings.ReplaceAll(doc.Category, " ", "-"))
+				if catID == "" {
+					catID = "miscellaneous"
 				}
-				docGroups := m.docRegistry.BySuper[sgID]
-				for i, g := range docGroups {
-					if g.FilePath == group.FilePath {
-						m.docRegistry.BySuper[sgID] = append(docGroups[:i], docGroups[i+1:]...)
+				catDocs := m.docRegistry.ByCategory[catID]
+				for i, d := range catDocs {
+					if d.FilePath == doc.FilePath {
+						m.docRegistry.ByCategory[catID] = append(catDocs[:i], catDocs[i+1:]...)
 						break
 					}
 				}
 
 				// Adjust cursor if needed
-				if m.docGroupCursor >= len(m.docRegistry.BySuper[sgID]) {
-					m.docGroupCursor = len(m.docRegistry.BySuper[sgID]) - 1
+				if m.docCursor >= len(m.docRegistry.ByCategory[catID]) {
+					m.docCursor = len(m.docRegistry.ByCategory[catID]) - 1
 				}
-				if m.docGroupCursor < 0 {
-					m.docGroupCursor = 0
+				if m.docCursor < 0 {
+					m.docCursor = 0
 				}
 
 				// Strip contexTUI metadata from the markdown file
-				stripContextGroupMetadata(m.rootPath, group.FilePath)
+				stripContextDocMetadata(m.rootPath, doc.FilePath)
 
 				// Save registry
-				if err := groups.SaveDocGroupRegistry(m.rootPath, m.docRegistry); err != nil {
+				if err := groups.SaveContextDocRegistry(m.rootPath, m.docRegistry); err != nil {
 					m.statusMessage = fmt.Sprintf("Error: %v", err)
 				} else {
-					m.statusMessage = fmt.Sprintf("Removed %s", group.Name)
+					m.statusMessage = fmt.Sprintf("Removed %s", doc.Name)
 				}
 				m.statusMessageTime = time.Now()
 				return m, ClearStatusAfter(5 * time.Second)
@@ -201,15 +212,15 @@ func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case " ":
-			// Toggle selection of current group for multi-copy
-			if m.docGroupCursor < totalGroups {
-				group := currentGroups[m.docGroupCursor]
-				if m.selectedGroups[group.FilePath] {
-					delete(m.selectedGroups, group.FilePath)
-					m.statusMessage = fmt.Sprintf("Deselected (%d total)", len(m.selectedGroups))
+			// Toggle selection of current doc for multi-copy
+			if m.docCursor < totalDocs {
+				doc := currentDocs[m.docCursor]
+				if m.selectedDocs[doc.FilePath] {
+					delete(m.selectedDocs, doc.FilePath)
+					m.statusMessage = fmt.Sprintf("Deselected (%d total)", len(m.selectedDocs))
 				} else {
-					m.selectedGroups[group.FilePath] = true
-					m.statusMessage = fmt.Sprintf("Selected (%d total)", len(m.selectedGroups))
+					m.selectedDocs[doc.FilePath] = true
+					m.statusMessage = fmt.Sprintf("Selected (%d total)", len(m.selectedDocs))
 				}
 				m.statusMessageTime = time.Now()
 				return m, ClearStatusAfter(2 * time.Second)
@@ -223,36 +234,36 @@ func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// First check if clicking on navigation bar (prev/next arrows)
 			navClick := m.findClickedNav(msg.X, msg.Y)
 			if navClick == navClickPrev && m.docRegistry != nil {
-				// Go to previous supergroup
-				m.selectedSupergroup--
-				if m.selectedSupergroup < 0 {
-					m.selectedSupergroup = len(m.docRegistry.Supergroups) - 1
+				// Go to previous category
+				m.selectedCategory--
+				if m.selectedCategory < 0 {
+					m.selectedCategory = len(m.docRegistry.Categories) - 1
 				}
-				m.docGroupCursor = 0
-				m.groupsScrollOffset = 0
+				m.docCursor = 0
+				m.docsScrollOffset = 0
 				return m, nil
 			} else if navClick == navClickNext && m.docRegistry != nil {
-				// Go to next supergroup
-				m.selectedSupergroup++
-				if m.selectedSupergroup >= len(m.docRegistry.Supergroups) {
-					m.selectedSupergroup = 0
+				// Go to next category
+				m.selectedCategory++
+				if m.selectedCategory >= len(m.docRegistry.Categories) {
+					m.selectedCategory = 0
 				}
-				m.docGroupCursor = 0
-				m.groupsScrollOffset = 0
+				m.docCursor = 0
+				m.docsScrollOffset = 0
 				return m, nil
 			}
 
 			// Try to find which card was clicked
-			clickedIdx := m.findClickedGroup(msg.X, msg.Y)
-			if clickedIdx >= 0 && clickedIdx < totalGroups {
+			clickedIdx := m.findClickedDoc(msg.X, msg.Y)
+			if clickedIdx >= 0 && clickedIdx < totalDocs {
 				// Move cursor to clicked item
-				m.docGroupCursor = clickedIdx
-				m.ensureDocGroupVisible()
+				m.docCursor = clickedIdx
+				m.ensureDocVisible()
 
 				// If multi-select is active, copy all selected
-				if len(m.selectedGroups) > 0 {
+				if len(m.selectedDocs) > 0 {
 					var refs []string
-					for path := range m.selectedGroups {
+					for path := range m.selectedDocs {
 						refs = append(refs, "@"+path)
 					}
 					combined := strings.Join(refs, "\n")
@@ -261,39 +272,39 @@ func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						m.statusMessage = fmt.Sprintf("Copied %d references", len(refs))
 					}
-					m.selectedGroups = make(map[string]bool)
+					m.selectedDocs = make(map[string]bool)
 				} else {
-					// Copy the clicked group as @filepath reference
-					group := currentGroups[clickedIdx]
-					if err := clipboard.CopyFilePath(group.FilePath); err != nil {
+					// Copy the clicked doc as @filepath reference
+					doc := currentDocs[clickedIdx]
+					if err := clipboard.CopyFilePath(doc.FilePath); err != nil {
 						m.statusMessage = "Clipboard unavailable"
 					} else {
-						m.statusMessage = fmt.Sprintf("Copied: @%s", group.FilePath)
+						m.statusMessage = fmt.Sprintf("Copied: @%s", doc.FilePath)
 					}
 				}
 				m.statusMessageTime = time.Now()
 				return m, ClearStatusAfter(5 * time.Second)
 			}
 		} else if msg.Button == tea.MouseButtonWheelUp {
-			m.groupsScrollOffset--
-			if m.groupsScrollOffset < 0 {
-				m.groupsScrollOffset = 0
+			m.docsScrollOffset--
+			if m.docsScrollOffset < 0 {
+				m.docsScrollOffset = 0
 			}
 			return m, nil
 		} else if msg.Button == tea.MouseButtonWheelDown {
-			m.groupsScrollOffset++
+			m.docsScrollOffset++
 			// Estimate max scroll based on card layout (~7 lines per card + headers)
 			maxContentHeight := m.height - 8
 			if maxContentHeight < 10 {
 				maxContentHeight = 10
 			}
-			estimatedLines := m.estimateGroupsLineCount()
+			estimatedLines := m.estimateDocsLineCount()
 			maxScroll := estimatedLines - maxContentHeight
 			if maxScroll < 0 {
 				maxScroll = 0
 			}
-			if m.groupsScrollOffset > maxScroll {
-				m.groupsScrollOffset = maxScroll
+			if m.docsScrollOffset > maxScroll {
+				m.docsScrollOffset = maxScroll
 			}
 			return m, nil
 		}
@@ -301,8 +312,8 @@ func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// ensureDocGroupVisible ensures the selected doc group is visible
-func (m *Model) ensureDocGroupVisible() {
+// ensureDocVisible ensures the selected doc is visible
+func (m *Model) ensureDocVisible() {
 	if m.docRegistry == nil {
 		return
 	}
@@ -312,77 +323,77 @@ func (m *Model) ensureDocGroupVisible() {
 		maxContentHeight = 8
 	}
 
-	lineIdx := m.getDocGroupLineIndex(m.docGroupCursor)
-	totalLines := m.getDocGroupTotalLines()
+	lineIdx := m.getDocLineIndex(m.docCursor)
+	totalLines := m.getDocTotalLines()
 
 	maxScroll := totalLines - maxContentHeight
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	if m.groupsScrollOffset > maxScroll {
-		m.groupsScrollOffset = maxScroll
+	if m.docsScrollOffset > maxScroll {
+		m.docsScrollOffset = maxScroll
 	}
-	if m.groupsScrollOffset < 0 {
-		m.groupsScrollOffset = 0
+	if m.docsScrollOffset < 0 {
+		m.docsScrollOffset = 0
 	}
 
-	if lineIdx < m.groupsScrollOffset {
-		m.groupsScrollOffset = lineIdx
-	} else if lineIdx >= m.groupsScrollOffset+maxContentHeight {
-		m.groupsScrollOffset = lineIdx - maxContentHeight + 1
+	if lineIdx < m.docsScrollOffset {
+		m.docsScrollOffset = lineIdx
+	} else if lineIdx >= m.docsScrollOffset+maxContentHeight {
+		m.docsScrollOffset = lineIdx - maxContentHeight + 1
 	}
 }
 
-// getDocGroupLineIndex returns the line index for a given group index
-func (m Model) getDocGroupLineIndex(groupIdx int) int {
+// getDocLineIndex returns the line index for a given doc index
+func (m Model) getDocLineIndex(docIdx int) int {
 	if m.docRegistry == nil {
 		return 0
 	}
 
 	lineIdx := 1 // Title line
 
-	currentGroupIdx := 0
-	for _, sg := range m.docRegistry.Supergroups {
-		sgGroups := m.docRegistry.BySuper[sg.ID]
-		if len(sgGroups) == 0 {
+	currentDocIdx := 0
+	for _, cat := range m.docRegistry.Categories {
+		catDocs := m.docRegistry.ByCategory[cat.ID]
+		if len(catDocs) == 0 {
 			continue
 		}
 
-		lineIdx += 2 // separator + supergroup name
+		lineIdx += 2 // separator + category name
 
-		for range sgGroups {
-			if currentGroupIdx == groupIdx {
+		for range catDocs {
+			if currentDocIdx == docIdx {
 				return lineIdx
 			}
 			lineIdx++
-			currentGroupIdx++
+			currentDocIdx++
 		}
 	}
 
 	return lineIdx
 }
 
-// getDocGroupTotalLines returns total lines in the doc groups overlay
-func (m Model) getDocGroupTotalLines() int {
-	return m.estimateGroupsLineCount()
+// getDocTotalLines returns total lines in the docs overlay
+func (m Model) getDocTotalLines() int {
+	return m.estimateDocsLineCount()
 }
 
-// estimateGroupsLineCount estimates actual rendered line count for card layout
-func (m Model) estimateGroupsLineCount() int {
-	docGroups := m.getGroupsForSelectedSupergroup()
+// estimateDocsLineCount estimates actual rendered line count for card layout
+func (m Model) estimateDocsLineCount() int {
+	docs := m.getDocsForSelectedCategory()
 
-	if len(docGroups) == 0 {
+	if len(docs) == 0 {
 		return 10 // Title + tabs + empty message
 	}
 
 	lineCount := 6 // Title + blank + tabs + separator + blank
 
 	// Each card: ~8 lines (border top/bottom + title + filepath + 3 desc + key files)
-	for _, group := range docGroups {
+	for _, doc := range docs {
 		cardLines := 5 // borders (2) + title (1) + filepath (1) + key files (1)
-		if group.Description != "" {
+		if doc.Description != "" {
 			// Estimate wrapped description lines (max 3)
-			descLen := len(group.Description)
+			descLen := len(doc.Description)
 			descLines := (descLen / 60) + 1
 			if descLines > 3 {
 				descLines = 3
@@ -405,7 +416,7 @@ const (
 // findClickedNav detects clicks on the gallery navigation bar
 // Returns: navClickPrev (-2) for left third, navClickNext (-3) for right third, navClickNone (-1) otherwise
 func (m Model) findClickedNav(clickX, clickY int) int {
-	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
+	if m.docRegistry == nil || len(m.docRegistry.Categories) == 0 {
 		return navClickNone
 	}
 
@@ -449,10 +460,10 @@ func (m Model) findClickedNav(clickX, clickY int) int {
 	return navClickNone
 }
 
-// findClickedGroup returns the index of the group at the click position, or -1
-func (m Model) findClickedGroup(clickX, clickY int) int {
-	docGroups := m.getGroupsForSelectedSupergroup()
-	if len(docGroups) == 0 {
+// findClickedDoc returns the index of the doc at the click position, or -1
+func (m Model) findClickedDoc(clickX, clickY int) int {
+	docs := m.getDocsForSelectedCategory()
+	if len(docs) == 0 {
 		return -1
 	}
 
@@ -480,14 +491,14 @@ func (m Model) findClickedGroup(clickX, clickY int) int {
 	headerLines := 6
 
 	// Calculate card line ranges (start line index for each card in the lines array)
-	cardStarts := make([]int, len(docGroups))
+	cardStarts := make([]int, len(docs))
 	currentLine := headerLines
-	for i, group := range docGroups {
+	for i, doc := range docs {
 		cardStarts[i] = currentLine
 		// Card height: border(2) + title(1) + filepath(1) + description(0-3) + keyfiles(1)
 		cardHeight := 5 // border top/bottom + title + filepath + key files
-		if group.Description != "" {
-			descLines := (len(group.Description) / 60) + 1
+		if doc.Description != "" {
+			descLines := (len(doc.Description) / 60) + 1
 			if descLines > 3 {
 				descLines = 3
 			}
@@ -498,7 +509,7 @@ func (m Model) findClickedGroup(clickX, clickY int) int {
 	totalLines := currentLine
 
 	// Calculate scroll bounds
-	scrollOffset := m.groupsScrollOffset
+	scrollOffset := m.docsScrollOffset
 	maxScroll := totalLines - maxContentHeight
 	if maxScroll < 0 {
 		maxScroll = 0
@@ -534,7 +545,7 @@ func (m Model) findClickedGroup(clickX, clickY int) int {
 	clickedLineIdx := scrollOffset + contentY
 
 	// Find which card contains this line
-	for i := len(docGroups) - 1; i >= 0; i-- {
+	for i := len(docs) - 1; i >= 0; i-- {
 		if clickedLineIdx >= cardStarts[i] {
 			return i
 		}
@@ -543,83 +554,83 @@ func (m Model) findClickedGroup(clickX, clickY int) int {
 	return -1
 }
 
-// updateAddGroup handles the add group picker
-func (m Model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
+// updateAddDoc handles the add doc picker
+func (m Model) updateAddDoc(msg tea.Msg) (tea.Model, tea.Cmd) {
 	totalFiles := len(m.availableMdFiles)
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
-			m.addingGroup = false
+			m.addingDoc = false
 			return m, nil
 
 		case "up", "k":
-			if m.addGroupCursor > 0 {
-				m.addGroupCursor--
-				m.ensureAddGroupVisible()
+			if m.addDocCursor > 0 {
+				m.addDocCursor--
+				m.ensureAddDocVisible()
 			}
 			return m, nil
 
 		case "down", "j":
-			if m.addGroupCursor < totalFiles-1 {
-				m.addGroupCursor++
-				m.ensureAddGroupVisible()
+			if m.addDocCursor < totalFiles-1 {
+				m.addDocCursor++
+				m.ensureAddDocVisible()
 			}
 			return m, nil
 
 		case "enter":
-			// Add the selected file as a context group
-			if m.addGroupCursor < totalFiles {
-				selectedPath := m.availableMdFiles[m.addGroupCursor]
+			// Add the selected file as a context doc
+			if m.addDocCursor < totalFiles {
+				selectedPath := m.availableMdFiles[m.addDocCursor]
 
 				// Parse the doc
-				group, err := groups.ParseDocContextGroup(m.rootPath, selectedPath)
+				doc, err := groups.ParseContextDoc(m.rootPath, selectedPath)
 				if err != nil {
 					m.statusMessage = fmt.Sprintf("Error: %v", err)
 					m.statusMessageTime = time.Now()
-					m.addingGroup = false
+					m.addingDoc = false
 					return m, ClearStatusAfter(5 * time.Second)
 				}
 
 				// Validate and check staleness
-				group.ValidateKeyFiles(m.rootPath)
-				group.CheckStaleness(m.rootPath)
+				doc.ValidateKeyFiles(m.rootPath)
+				doc.CheckStaleness(m.rootPath)
 
 				// If file is missing required structure, insert tag
-				if len(group.MissingFields) > 0 {
+				if len(doc.MissingFields) > 0 {
 					insertStructureTag(m.rootPath, selectedPath)
 				}
 
 				// Initialize registry if needed
 				if m.docRegistry == nil {
-					m.docRegistry = &groups.DocGroupRegistry{
-						Supergroups: groups.DefaultSupergroups(),
-						Groups:      []groups.DocContextGroup{},
-						BySuper:     make(map[string][]groups.DocContextGroup),
+					m.docRegistry = &groups.ContextDocRegistry{
+						Categories: groups.DefaultCategories(),
+						Docs:       []groups.ContextDoc{},
+						ByCategory: make(map[string][]groups.ContextDoc),
 					}
 				}
 
 				// Add to registry
-				m.docRegistry.Groups = append(m.docRegistry.Groups, *group)
+				m.docRegistry.Docs = append(m.docRegistry.Docs, *doc)
 
-				// Update BySuper map
-				sgID := strings.ToLower(strings.ReplaceAll(group.Supergroup, " ", "-"))
-				if sgID == "" {
-					sgID = "miscellaneous"
+				// Update ByCategory map
+				catID := strings.ToLower(strings.ReplaceAll(doc.Category, " ", "-"))
+				if catID == "" {
+					catID = "miscellaneous"
 				}
-				m.docRegistry.BySuper[sgID] = append(m.docRegistry.BySuper[sgID], *group)
+				m.docRegistry.ByCategory[catID] = append(m.docRegistry.ByCategory[catID], *doc)
 
 				// Save registry
-				if err := groups.SaveDocGroupRegistry(m.rootPath, m.docRegistry); err != nil {
+				if err := groups.SaveContextDocRegistry(m.rootPath, m.docRegistry); err != nil {
 					m.statusMessage = fmt.Sprintf("Error saving: %v", err)
-				} else if len(group.MissingFields) > 0 {
+				} else if len(doc.MissingFields) > 0 {
 					m.statusMessage = "Added (incomplete)! Press 'p' for structuring prompt"
 				} else {
-					m.statusMessage = fmt.Sprintf("Added %s!", group.Name)
+					m.statusMessage = fmt.Sprintf("Added %s!", doc.Name)
 				}
 				m.statusMessageTime = time.Now()
-				m.addingGroup = false
+				m.addingDoc = false
 				return m, ClearStatusAfter(5 * time.Second)
 			}
 			return m, nil
@@ -627,19 +638,19 @@ func (m Model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		if msg.Button == tea.MouseButtonWheelUp {
-			m.addGroupScroll--
-			if m.addGroupScroll < 0 {
-				m.addGroupScroll = 0
+			m.addDocScroll--
+			if m.addDocScroll < 0 {
+				m.addDocScroll = 0
 			}
 			return m, nil
 		} else if msg.Button == tea.MouseButtonWheelDown {
-			m.addGroupScroll++
+			m.addDocScroll++
 			maxScroll := totalFiles - (m.height - 12)
 			if maxScroll < 0 {
 				maxScroll = 0
 			}
-			if m.addGroupScroll > maxScroll {
-				m.addGroupScroll = maxScroll
+			if m.addDocScroll > maxScroll {
+				m.addDocScroll = maxScroll
 			}
 			return m, nil
 		}
@@ -647,54 +658,54 @@ func (m Model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// ensureAddGroupVisible keeps the cursor visible in add group picker
-func (m *Model) ensureAddGroupVisible() {
+// ensureAddDocVisible keeps the cursor visible in add doc picker
+func (m *Model) ensureAddDocVisible() {
 	maxHeight := m.height - 12
 	if maxHeight < 5 {
 		maxHeight = 5
 	}
 
-	if m.addGroupCursor < m.addGroupScroll {
-		m.addGroupScroll = m.addGroupCursor
-	} else if m.addGroupCursor >= m.addGroupScroll+maxHeight {
-		m.addGroupScroll = m.addGroupCursor - maxHeight + 1
+	if m.addDocCursor < m.addDocScroll {
+		m.addDocScroll = m.addDocCursor
+	} else if m.addDocCursor >= m.addDocScroll+maxHeight {
+		m.addDocScroll = m.addDocCursor - maxHeight + 1
 	}
 }
 
-// getGroupsForSelectedSupergroup returns groups for the currently selected supergroup
-func (m Model) getGroupsForSelectedSupergroup() []groups.DocContextGroup {
-	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
+// getDocsForSelectedCategory returns docs for the currently selected category
+func (m Model) getDocsForSelectedCategory() []groups.ContextDoc {
+	if m.docRegistry == nil || len(m.docRegistry.Categories) == 0 {
 		return nil
 	}
 
-	// Clamp selected supergroup
-	sgIdx := m.selectedSupergroup
-	if sgIdx < 0 {
-		sgIdx = 0
+	// Clamp selected category
+	catIdx := m.selectedCategory
+	if catIdx < 0 {
+		catIdx = 0
 	}
-	if sgIdx >= len(m.docRegistry.Supergroups) {
-		sgIdx = len(m.docRegistry.Supergroups) - 1
+	if catIdx >= len(m.docRegistry.Categories) {
+		catIdx = len(m.docRegistry.Categories) - 1
 	}
 
-	sg := m.docRegistry.Supergroups[sgIdx]
-	return m.docRegistry.BySuper[sg.ID]
+	cat := m.docRegistry.Categories[catIdx]
+	return m.docRegistry.ByCategory[cat.ID]
 }
 
-// getSelectedSupergroupName returns the name of the currently selected supergroup
-func (m Model) getSelectedSupergroupName() string {
-	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
+// getSelectedCategoryName returns the name of the currently selected category
+func (m Model) getSelectedCategoryName() string {
+	if m.docRegistry == nil || len(m.docRegistry.Categories) == 0 {
 		return ""
 	}
 
-	sgIdx := m.selectedSupergroup
-	if sgIdx < 0 {
-		sgIdx = 0
+	catIdx := m.selectedCategory
+	if catIdx < 0 {
+		catIdx = 0
 	}
-	if sgIdx >= len(m.docRegistry.Supergroups) {
-		sgIdx = len(m.docRegistry.Supergroups) - 1
+	if catIdx >= len(m.docRegistry.Categories) {
+		catIdx = len(m.docRegistry.Categories) - 1
 	}
 
-	return m.docRegistry.Supergroups[sgIdx].Name
+	return m.docRegistry.Categories[catIdx].Name
 }
 
 // insertStructureTag adds the structure-needed tag to a file if not already present
@@ -716,8 +727,8 @@ func insertStructureTag(rootPath, filePath string) error {
 	return os.WriteFile(fullPath, []byte(newContent), 0644)
 }
 
-// stripContextGroupMetadata removes contexTUI-specific metadata from a markdown file
-func stripContextGroupMetadata(rootPath, filePath string) error {
+// stripContextDocMetadata removes contexTUI-specific metadata from a markdown file
+func stripContextDocMetadata(rootPath, filePath string) error {
 	fullPath := filepath.Join(rootPath, filePath)
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
@@ -730,7 +741,7 @@ func stripContextGroupMetadata(rootPath, filePath string) error {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		// Skip contexTUI metadata lines
-		if strings.HasPrefix(trimmed, "**Supergroup:**") ||
+		if strings.HasPrefix(trimmed, "**Category:**") ||
 			strings.HasPrefix(trimmed, "**Status:**") ||
 			strings.HasPrefix(trimmed, "**Related:**") ||
 			strings.Contains(trimmed, "<!-- contexTUI: structure-needed -->") {

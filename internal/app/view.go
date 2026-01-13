@@ -108,9 +108,9 @@ func (m Model) View() string {
 		return m.renderSearchOverlay(mainView)
 	}
 
-	// Overlay groups if active
-	if m.showingGroups {
-		return m.renderGroupsOverlay(mainView)
+	// Overlay docs if active
+	if m.showingDocs {
+		return m.renderDocsOverlay(mainView)
 	}
 
 	return mainView
@@ -276,18 +276,18 @@ func (m Model) RenderTree() string {
 	return b.String()
 }
 
-func (m Model) renderGroupsOverlay(background string) string {
-	// Use add group picker if in that mode
-	if m.addingGroup {
-		return m.renderAddGroupOverlay(background)
+func (m Model) renderDocsOverlay(background string) string {
+	// Use add doc picker if in that mode
+	if m.addingDoc {
+		return m.renderAddDocOverlay(background)
 	}
 
-	// Use doc-based groups rendering
-	return m.renderDocGroupsOverlay(background)
+	// Use doc-based rendering
+	return m.renderContextDocsOverlay(background)
 }
 
-// renderAddGroupOverlay renders the add group file picker
-func (m Model) renderAddGroupOverlay(background string) string {
+// renderAddDocOverlay renders the add doc file picker
+func (m Model) renderAddDocOverlay(background string) string {
 	titleStyle := styles.Title
 	selectedStyle := styles.Selected
 	normalStyle := styles.Normal
@@ -295,13 +295,13 @@ func (m Model) renderAddGroupOverlay(background string) string {
 	separatorStyle := styles.Faint
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("Add Context Group"))
+	lines = append(lines, titleStyle.Render("Add Context Doc"))
 	lines = append(lines, "")
-	lines = append(lines, metaStyle.Render("Select a markdown file to add as a context group:"))
+	lines = append(lines, metaStyle.Render("Select a markdown file to add as a context doc:"))
 	lines = append(lines, "")
 
 	for i, file := range m.availableMdFiles {
-		isSelected := i == m.addGroupCursor
+		isSelected := i == m.addDocCursor
 		line := "  " + file
 		if isSelected {
 			lines = append(lines, selectedStyle.Render(line))
@@ -317,7 +317,7 @@ func (m Model) renderAddGroupOverlay(background string) string {
 	}
 
 	totalLines := len(lines)
-	scrollOffset := m.addGroupScroll
+	scrollOffset := m.addDocScroll
 
 	maxScroll := totalLines - maxHeight
 	if maxScroll < 0 {
@@ -360,17 +360,17 @@ func (m Model) renderAddGroupOverlay(background string) string {
 		Width(70).
 		MaxHeight(m.height - 4)
 
-	groupsBox := boxStyle.Render(content.String())
+	docsBox := boxStyle.Render(content.String())
 
 	return lipgloss.Place(
 		m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
-		groupsBox,
+		docsBox,
 	)
 }
 
-// renderDocGroupsOverlay renders the v2 documentation-first context groups as cards
-func (m Model) renderDocGroupsOverlay(background string) string {
+// renderContextDocsOverlay renders the v2 documentation-first context docs as cards
+func (m Model) renderContextDocsOverlay(background string) string {
 	// Card width for description wrapping
 	cardWidth := 68
 
@@ -398,33 +398,33 @@ func (m Model) renderDocGroupsOverlay(background string) string {
 	var lines []string
 
 	// Title with copy feedback
-	titleLine := titleStyle.Render("Context Groups")
+	titleLine := titleStyle.Render("Context Docs")
 	if m.statusMessage != "" && strings.HasPrefix(m.statusMessage, "Copied:") {
 		titleLine += "  " + copiedStyle.Render(m.statusMessage)
 	}
 	lines = append(lines, titleLine)
 	lines = append(lines, "")
 
-	// Supergroup gallery navigation - show prev | current | next
-	if m.docRegistry != nil && len(m.docRegistry.Supergroups) > 0 {
-		numSupergroups := len(m.docRegistry.Supergroups)
-		sgIdx := m.selectedSupergroup
-		if sgIdx < 0 {
-			sgIdx = 0
+	// Category gallery navigation - show prev | current | next
+	if m.docRegistry != nil && len(m.docRegistry.Categories) > 0 {
+		numCategories := len(m.docRegistry.Categories)
+		catIdx := m.selectedCategory
+		if catIdx < 0 {
+			catIdx = 0
 		}
-		if sgIdx >= numSupergroups {
-			sgIdx = numSupergroups - 1
+		if catIdx >= numCategories {
+			catIdx = numCategories - 1
 		}
 
-		// Get prev, current, next supergroups (with wraparound)
-		prevIdx := (sgIdx - 1 + numSupergroups) % numSupergroups
-		nextIdx := (sgIdx + 1) % numSupergroups
+		// Get prev, current, next categories (with wraparound)
+		prevIdx := (catIdx - 1 + numCategories) % numCategories
+		nextIdx := (catIdx + 1) % numCategories
 
-		prevSg := m.docRegistry.Supergroups[prevIdx]
-		currSg := m.docRegistry.Supergroups[sgIdx]
-		nextSg := m.docRegistry.Supergroups[nextIdx]
+		prevCat := m.docRegistry.Categories[prevIdx]
+		currCat := m.docRegistry.Categories[catIdx]
+		nextCat := m.docRegistry.Categories[nextIdx]
 
-		currCount := len(m.docRegistry.BySuper[currSg.ID])
+		currCount := len(m.docRegistry.ByCategory[currCat.ID])
 
 		// Styles
 		fadedStyle := lipgloss.NewStyle().Foreground(styles.BorderInactive)
@@ -432,9 +432,9 @@ func (m Model) renderDocGroupsOverlay(background string) string {
 		arrowStyle := lipgloss.NewStyle().Foreground(styles.TextFaint)
 
 		// Build gallery: ◀ PrevName  |  CurrentName (count)  |  NextName ▶
-		prevText := fadedStyle.Render(fmt.Sprintf("◀ %s", prevSg.Name))
-		currText := activeStyle.Render(fmt.Sprintf("%s (%d)", currSg.Name, currCount))
-		nextText := fadedStyle.Render(fmt.Sprintf("%s ▶", nextSg.Name))
+		prevText := fadedStyle.Render(fmt.Sprintf("◀ %s", prevCat.Name))
+		currText := activeStyle.Render(fmt.Sprintf("%s (%d)", currCat.Name, currCount))
+		nextText := fadedStyle.Render(fmt.Sprintf("%s ▶", nextCat.Name))
 		divider := arrowStyle.Render("  │  ")
 
 		navLine := prevText + divider + currText + divider + nextText
@@ -447,39 +447,39 @@ func (m Model) renderDocGroupsOverlay(background string) string {
 		lines = append(lines, "")
 	}
 
-	// Get groups for selected supergroup
-	groups := m.getGroupsForSelectedSupergroup()
+	// Get docs for selected category
+	docs := m.getDocsForSelectedCategory()
 
-	if m.docRegistry == nil || len(m.docRegistry.Groups) == 0 {
-		lines = append(lines, metaStyle.Render("No context groups defined yet."))
+	if m.docRegistry == nil || len(m.docRegistry.Docs) == 0 {
+		lines = append(lines, metaStyle.Render("No context docs defined yet."))
 		lines = append(lines, "")
-		lines = append(lines, metaStyle.Render("Press 'a' to add a markdown file as a context group."))
-	} else if len(groups) == 0 {
-		lines = append(lines, metaStyle.Render("No groups in this category."))
+		lines = append(lines, metaStyle.Render("Press 'a' to add a markdown file as a context doc."))
+	} else if len(docs) == 0 {
+		lines = append(lines, metaStyle.Render("No docs in this category."))
 		lines = append(lines, "")
-		lines = append(lines, metaStyle.Render("Use h/l to switch categories, or 'a' to add a group."))
+		lines = append(lines, metaStyle.Render("Use h/l to switch categories, or 'a' to add a doc."))
 	} else {
-		// Render each group as a card
-		for groupIdx, group := range groups {
-			isSelected := groupIdx == m.docGroupCursor
+		// Render each doc as a card
+		for docIdx, doc := range docs {
+			isSelected := docIdx == m.docCursor
 
 			// Build card content
 			var cardLines []string
 
 			// Selection indicator
 			selectionPrefix := "  "
-			if m.selectedGroups[group.FilePath] {
+			if m.selectedDocs[doc.FilePath] {
 				selectionPrefix = lipgloss.NewStyle().Foreground(styles.SuccessBold).Render("✓ ")
 			}
 
 			// Title line with status indicators
-			titleLine := selectionPrefix + lipgloss.NewStyle().Bold(true).Render(group.Name)
+			titleLine := selectionPrefix + lipgloss.NewStyle().Bold(true).Render(doc.Name)
 
 			// Status badge
 			statusBadge := ""
-			if group.Status != "" {
+			if doc.Status != "" {
 				statusColor := "244" // gray default
-				switch group.Status {
+				switch doc.Status {
 				case "Active":
 					statusColor = "82" // green
 				case "Deprecated":
@@ -491,29 +491,29 @@ func (m Model) renderDocGroupsOverlay(background string) string {
 				}
 				statusBadge = lipgloss.NewStyle().
 					Foreground(lipgloss.Color(statusColor)).
-					Render(" [" + group.Status + "]")
+					Render(" [" + doc.Status + "]")
 			}
 
 			// Issue indicators
 			var indicators []string
-			if len(group.MissingFields) > 0 {
+			if len(doc.MissingFields) > 0 {
 				indicators = append(indicators, warningStyle.Render(" ⚠ incomplete"))
 			}
-			if len(group.BrokenKeyFiles) > 0 {
+			if len(doc.BrokenKeyFiles) > 0 {
 				indicators = append(indicators, errorStyle.Render(" ✗ broken refs"))
 			}
-			if group.IsStale {
+			if doc.IsStale {
 				indicators = append(indicators, staleStyle.Render(" ○ stale"))
 			}
 
 			cardLines = append(cardLines, titleLine+statusBadge+strings.Join(indicators, ""))
 
 			// Filepath - show below title for clarity
-			cardLines = append(cardLines, metaStyle.Render(group.FilePath))
+			cardLines = append(cardLines, metaStyle.Render(doc.FilePath))
 
 			// Description - word wrap to card width
-			if group.Description != "" {
-				desc := group.Description
+			if doc.Description != "" {
+				desc := doc.Description
 				wrapped := wrapText(desc, cardWidth-4)
 				for _, line := range wrapped {
 					cardLines = append(cardLines, descStyle.Render(line))
@@ -522,11 +522,11 @@ func (m Model) renderDocGroupsOverlay(background string) string {
 
 			// Key files count and token estimate
 			var metaParts []string
-			if len(group.KeyFiles) > 0 {
-				metaParts = append(metaParts, fmt.Sprintf("%d key files", len(group.KeyFiles)))
+			if len(doc.KeyFiles) > 0 {
+				metaParts = append(metaParts, fmt.Sprintf("%d key files", len(doc.KeyFiles)))
 			}
-			if group.TokenEstimate > 0 {
-				metaParts = append(metaParts, fmt.Sprintf("~%d tokens", group.TokenEstimate))
+			if doc.TokenEstimate > 0 {
+				metaParts = append(metaParts, fmt.Sprintf("~%d tokens", doc.TokenEstimate))
 			}
 			if len(metaParts) > 0 {
 				cardLines = append(cardLines, metaStyle.Render(strings.Join(metaParts, " · ")))
@@ -555,7 +555,7 @@ func (m Model) renderDocGroupsOverlay(background string) string {
 	}
 
 	totalLines := len(lines)
-	scrollOffset := m.groupsScrollOffset
+	scrollOffset := m.docsScrollOffset
 
 	maxScroll := totalLines - maxContentHeight
 	if maxScroll < 0 {
@@ -597,9 +597,9 @@ func (m Model) renderDocGroupsOverlay(background string) string {
 		// Show status message (copy feedback, etc.)
 		content.WriteString(statusStyle.Render(m.statusMessage))
 		content.WriteString("  ")
-	} else if len(m.selectedGroups) > 0 {
+	} else if len(m.selectedDocs) > 0 {
 		// Show selection count when no status message
-		content.WriteString(statusStyle.Render(fmt.Sprintf("%d selected  ", len(m.selectedGroups))))
+		content.WriteString(statusStyle.Render(fmt.Sprintf("%d selected  ", len(m.selectedDocs))))
 	}
 	content.WriteString(metaStyle.Render(footerText))
 
@@ -616,12 +616,12 @@ func (m Model) renderDocGroupsOverlay(background string) string {
 		Width(cardWidth + 8).
 		Height(fixedHeight)
 
-	groupsBox := boxStyle.Render(content.String())
+	docsBox := boxStyle.Render(content.String())
 
 	return lipgloss.Place(
 		m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
-		groupsBox,
+		docsBox,
 	)
 }
 

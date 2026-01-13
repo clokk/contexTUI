@@ -1,6 +1,6 @@
 # contexTUI
 
-**Supergroup:** Meta
+**Category:** Meta
 **Status:** Active
 
 ## Description
@@ -10,7 +10,7 @@ User-facing documentation for contexTUI - installation, usage, and key commands.
 ## Key Files
 
 - main.go - Application entry point
-- .context-groups.md - Context groups configuration
+- .context-docs.md - Context docs configuration
 
 ---
 
@@ -57,7 +57,7 @@ Press `?` for help at any time.
 ## Features
 
 - **File tree + preview** - Navigate and preview files in a split pane
-- **Context groups** - Pre-defined file sets for quick context loading
+- **Context docs** - Documentation-first context system
 - **Git integration** - Status badges, diff preview, branch display
 - **Copy as context** - Copy files as `@filepath` references for AI tools
 
@@ -69,28 +69,33 @@ Press `?` for help at any time.
 | `h/l` | Collapse/expand or switch panes |
 | `enter` | Open directory or select file |
 | `c` | Copy file path(s) |
-| `g` | Open context groups |
+| `g` | Open context docs |
 | `s` | Toggle git status view |
 | `/` | Search files |
 | `?` | Show help |
 | `q` | Quit |
 
-## Context Groups
+## Context Docs
 
-Define reusable file groups in `.context-groups.md`:
+Documentation files become context docs with embedded metadata in `.context-docs.md`:
 
 ```markdown
-## my-feature
-layer: feature
+# My Feature
 
-Files for the my-feature system.
+**Category:** Feature
+**Status:** Active
 
-- src/feature.ts
-- src/feature.test.ts
-- docs/feature.md
+## Description
+
+What this feature does and why.
+
+## Key Files
+
+- src/feature.ts - Main implementation
+- src/feature.test.ts - Tests
 ```
 
-Press `g` to open groups, navigate with `h/l/j/k`, press `c` to copy all files.
+Press `g` to open context docs, navigate with `h/l/j/k`, press `c` to copy.
 
 ## Environment
 

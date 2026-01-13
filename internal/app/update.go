@@ -18,12 +18,12 @@ import (
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	// Handle filesystem events first (before mode checks) so context groups auto-reload
+	// Handle filesystem events first (before mode checks) so context docs auto-reload
 	if _, ok := msg.(FsEventMsg); ok {
 		m.entries = LoadDirectory(m.rootPath, 0)
 		m.allFiles = CollectAllFiles(m.rootPath)
-		// Reload doc-based context groups
-		m.docRegistry, _ = groups.LoadDocGroupRegistry(m.rootPath)
+		// Reload doc-based context docs
+		m.docRegistry, _ = groups.LoadContextDocRegistry(m.rootPath)
 		// Refresh git status
 		if m.isGitRepo {
 			m.gitStatus, m.gitChanges = git.LoadStatus(m.gitRepoRoot)
@@ -76,9 +76,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSearch(msg)
 	}
 
-	// Handle groups panel mode
-	if m.showingGroups {
-		return m.updateGroups(msg)
+	// Handle docs panel mode
+	if m.showingDocs {
+		return m.updateDocs(msg)
 	}
 
 	// Handle visual selection mode
@@ -313,10 +313,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 
 		case "g":
-			// Show groups panel
-			m.showingGroups = true
-			m.docGroupCursor = 0
-			m.groupsScrollOffset = 0
+			// Show docs panel
+			m.showingDocs = true
+			m.docCursor = 0
+			m.docsScrollOffset = 0
 			return m, nil
 
 		case "v":

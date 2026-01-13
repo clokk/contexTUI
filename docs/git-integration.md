@@ -1,6 +1,6 @@
 # Git Integration
 
-**Supergroup:** Feature
+**Category:** Feature
 **Status:** Active
 
 ## Description

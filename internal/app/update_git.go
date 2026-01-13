@@ -101,11 +101,11 @@ func (m Model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchCursor = 0
 			return m, textinput.Blink
 
-		// Show groups overlay - SHARED
+		// Show docs overlay - SHARED
 		case "g":
-			m.showingGroups = true
-			m.docGroupCursor = 0
-			m.groupsScrollOffset = 0
+			m.showingDocs = true
+			m.docCursor = 0
+			m.docsScrollOffset = 0
 			return m, nil
 
 		// Enter copy mode - SHARED

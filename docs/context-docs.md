@@ -1,24 +1,24 @@
-# Context Groups v2: Documentation-First Context System
+# Context Docs: Documentation-First Context System
 
-**Supergroup:** Meta
+**Category:** Meta
 **Status:** Active
 
 ## Description
 
-This document describes the vision and implementation plan for Context Groups v2—a fundamental shift from "context groups as curated code file lists" to "context groups ARE documentation files with embedded metadata."
+This document describes the vision and implementation plan for Context Docs—a fundamental shift from "context docs as curated code file lists" to "context docs ARE documentation files with embedded metadata."
 
 ## Key Files
 
-- internal/app/types.go - ContextGroup struct and model definition
+- internal/app/types.go - ContextDoc struct and model definition
 - internal/groups/groups.go - Parsing logic and registry management
-- internal/app/view.go - Groups overlay rendering
+- internal/app/view.go - Docs overlay rendering
 - internal/clipboard/clipboard.go - Copy functionality
 
 ---
 
 ## The Problem
 
-Context groups with many code files are counterproductive. Copying 15+ code files blows out the AI context window before the conversation even starts. The original model optimizes for exhaustiveness—"give Claude everything it might need"—but that's backwards:
+Context docs with many code files are counterproductive. Copying 15+ code files blows out the AI context window before the conversation even starts. The original model optimizes for exhaustiveness—"give Claude everything it might need"—but that's backwards:
 
 - More files ≠ better context
 - Code shows *what*, not *why*
@@ -34,32 +34,32 @@ Markdown documentation has a much higher signal-to-token ratio than raw code. A 
 
 ### Documentation IS Context
 
-Documentation files aren't pointers to context—they ARE the context. Each documentation markdown file becomes a context group with embedded metadata that helps both humans and AI understand:
+Documentation files aren't pointers to context—they ARE the context. Each documentation markdown file becomes a context doc with embedded metadata that helps both humans and AI understand:
 
 1. What this covers (Description)
 2. Where to find the code (Key Files)
-3. How it relates to other parts (Related, Supergroup)
+3. How it relates to other parts (Related, Category)
 4. Whether it's current (Status, staleness detection)
 5. What it doesn't cover (Out of Scope)
 
 ### Architecture
 
 ```
-.context-groups.md              ← Index/registry + agent primer
+.context-docs.md                ← Index/registry + agent primer
     ↓ references
-docs/authentication.md          ← Context group (with inline metadata)
-docs/api-layer.md              ← Context group
-ARCHITECTURE.md                ← Context group
+docs/authentication.md          ← Context doc (with inline metadata)
+docs/api-layer.md              ← Context doc
+ARCHITECTURE.md                ← Context doc
 ```
 
 ## Documentation Structure
 
-Each context group is a markdown file with this structure:
+Each context doc is a markdown file with this structure:
 
 ```markdown
 # Feature Name
 
-**Supergroup:** Feature
+**Category:** Feature
 **Status:** Active
 **Related:** oauth.md, sessions.md
 
@@ -87,42 +87,42 @@ What this doesn't cover—directs AI elsewhere.
 
 | Field | Required | Purpose |
 |-------|----------|---------|
-| **Supergroup** | Yes | Categorization (Meta, Feature, or custom) |
+| **Category** | Yes | Categorization (Meta, Feature, or custom) |
 | **Status** | Yes | Active, Deprecated, Experimental, Planned |
 | **Related** | No | Links to other docs for context chaining |
 | **Description** | Yes | High-level purpose section |
 | **Key Files** | Yes | Code entry points (not exhaustive) |
 | **Out of Scope** | No | Boundaries to prevent AI assumptions |
 
-### Default Supergroups
+### Default Categories
 
 - **Meta** - Project-level docs (vision, standards, architecture, agent instructions)
 - **Feature** - Feature-specific documentation
 - **Miscellaneous** - Catch-all
 
-Custom supergroups are auto-discovered from markdown files.
+Custom categories are auto-discovered from markdown files.
 
-## .context-groups.md as Registry
+## .context-docs.md as Registry
 
-The `.context-groups.md` file becomes an index/registry and agent primer:
+The `.context-docs.md` file becomes an index/registry and agent primer:
 
 ```markdown
-# Context Groups
+# Context Docs
 
-This project uses structured documentation as context groups.
-Each group is a markdown file with metadata: Supergroup, Status,
+This project uses structured documentation as context docs.
+Each doc is a markdown file with metadata: Category, Status,
 Description, Key Files, and optionally Related and Out of Scope.
 
-Supergroups are auto-discovered from markdown files. To create a custom
-supergroup, just set `**Supergroup:** YourCategory` in any markdown file.
+Categories are auto-discovered from markdown files. To create a custom
+category, just set `**Category:** YourCategory` in any markdown file.
 
-## Supergroups (auto-discovered)
+## Categories (auto-discovered)
 
 - Meta
 - Feature
 - Miscellaneous
 
-## Active Groups
+## Active Docs
 
 - docs/authentication.md (Feature, Active)
 - docs/api-layer.md (Feature, Active)
@@ -131,37 +131,37 @@ supergroup, just set `**Supergroup:** YourCategory` in any markdown file.
 
 ## User Flow in contexTUI
 
-1. Press `g` → Groups view
-2. See groups organized by supergroup (gallery navigation at top)
-3. Use `h`/`l` or click to switch between supergroup categories
+1. Press `g` → Docs view
+2. See docs organized by category (gallery navigation at top)
+3. Use `h`/`l` or click to switch between categories
 4. Visual indicators:
    - incomplete - Missing required structure
    - broken refs - File references that don't exist
    - stale - Referenced files changed since doc last modified
-5. `a` → Add new group (search all .md files in project)
+5. `a` → Add new doc (search all .md files in project)
 6. Select file → Added to registry, analyzed for structure
 7. `c` or click → Copy markdown content for prompting
 
-## Managing Supergroups
+## Managing Categories
 
-Supergroups are managed automatically. There are three defaults (Meta, Feature, Miscellaneous) and custom supergroups are auto-discovered from markdown files.
+Categories are managed automatically. There are three defaults (Meta, Feature, Miscellaneous) and custom categories are auto-discovered from markdown files.
 
 ### For Users and AI Agents
 
-**To create a custom supergroup:**
-Simply set `**Supergroup:** YourCategory` in any markdown file. The supergroup will be created automatically when the file is added to the registry.
+**To create a custom category:**
+Simply set `**Category:** YourCategory` in any markdown file. The category will be created automatically when the file is added to the registry.
 
 ```markdown
 # My Feature Documentation
 
-**Supergroup:** My Custom Category
+**Category:** My Custom Category
 **Status:** Active
 ```
 
-**To remove a custom supergroup:**
-Change or remove the `**Supergroup:**` line in the markdown files that use it. When no files reference a custom supergroup, it is automatically removed.
+**To remove a custom category:**
+Change or remove the `**Category:**` line in the markdown files that use it. When no files reference a custom category, it is automatically removed.
 
-**Default supergroups:**
+**Default categories:**
 The three defaults (Meta, Feature, Miscellaneous) are always available and cannot be removed.
 
 The registry auto-syncs when files are modified (file watcher) or when the app loads.
@@ -184,25 +184,25 @@ This is meaningful because it indicates the code has evolved but the documentati
 - Token-efficient (markdown vs code)
 - Encourages good documentation practices
 - Staleness tracking built-in
-- AI agents can read `.context-groups.md` to understand project structure
+- AI agents can read `.context-docs.md` to understand project structure
 
 ## Implementation Phases
 
 ### Phase 1: Core Implementation
 
-- [ ] New context group discovery (search .md files)
-- [ ] Parse markdown for required metadata sections
-- [ ] Registry management in .context-groups.md
-- [ ] Display groups organized by supergroup
-- [ ] Copy markdown content
-- [ ] Flag missing structure with visual indicators
+- [x] New context doc discovery (search .md files)
+- [x] Parse markdown for required metadata sections
+- [x] Registry management in .context-docs.md
+- [x] Display docs organized by category
+- [x] Copy markdown content
+- [x] Flag missing structure with visual indicators
 
 ### Phase 2: Validation & Assistance
 
-- [ ] Validate key file paths exist
-- [ ] Git-based staleness detection
-- [ ] Template insertion for missing sections
-- [ ] Generate Claude prompt for doc structuring assistance
+- [x] Validate key file paths exist
+- [x] Git-based staleness detection
+- [x] Template insertion for missing sections
+- [x] Generate Claude prompt for doc structuring assistance
 
 ### Phase 3: Future Vision
 
