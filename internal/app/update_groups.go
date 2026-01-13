@@ -413,18 +413,32 @@ func (m *Model) ensureDocVisible() {
 }
 
 // getDocLineIndex returns the line index for a given doc index within the current category
+// In multi-column mode, this returns the row position within the doc's column
 func (m Model) getDocLineIndex(docIdx int) int {
 	docs := m.getDocsForSelectedCategory()
 	if len(docs) == 0 || docIdx < 0 || docIdx >= len(docs) {
 		return 0
 	}
 
-	// Cards start after header (which is now sticky/not scrolled)
-	// So line 0 is the first card
-	lineIdx := 0
+	numCols := m.getDocsColumnCount()
+	if numCols == 1 {
+		// Single column: simple cumulative height
+		lineIdx := 0
+		for i := 0; i < docIdx; i++ {
+			lineIdx += m.getCardHeight(docs[i])
+		}
+		return lineIdx
+	}
 
-	// Calculate cumulative card heights up to the target doc
-	for i := 0; i < docIdx; i++ {
+	// Multi-column: calculate position within column
+	docsPerCol := (len(docs) + numCols - 1) / numCols
+	colIdx := docIdx / docsPerCol
+	posInCol := docIdx % docsPerCol
+
+	// Calculate line index within this column
+	lineIdx := 0
+	startDocIdx := colIdx * docsPerCol
+	for i := startDocIdx; i < startDocIdx+posInCol && i < len(docs); i++ {
 		lineIdx += m.getCardHeight(docs[i])
 	}
 
@@ -460,6 +474,7 @@ func (m Model) getDocTotalLines() int {
 }
 
 // estimateDocsLineCount estimates total scrollable content height (cards only, header is sticky)
+// In multi-column mode, returns the height of the tallest column
 func (m Model) estimateDocsLineCount() int {
 	docs := m.getDocsForSelectedCategory()
 
@@ -467,12 +482,36 @@ func (m Model) estimateDocsLineCount() int {
 		return 3 // Empty message takes a few lines
 	}
 
-	lineCount := 0
-	for _, doc := range docs {
-		lineCount += m.getCardHeight(doc)
+	numCols := m.getDocsColumnCount()
+	if numCols == 1 {
+		// Single column: sum all card heights
+		lineCount := 0
+		for _, doc := range docs {
+			lineCount += m.getCardHeight(doc)
+		}
+		return lineCount
 	}
 
-	return lineCount
+	// Multi-column: calculate height of each column, return the max
+	docsPerCol := (len(docs) + numCols - 1) / numCols
+	maxColHeight := 0
+
+	for colIdx := 0; colIdx < numCols; colIdx++ {
+		colHeight := 0
+		startIdx := colIdx * docsPerCol
+		endIdx := startIdx + docsPerCol
+		if endIdx > len(docs) {
+			endIdx = len(docs)
+		}
+		for i := startIdx; i < endIdx; i++ {
+			colHeight += m.getCardHeight(docs[i])
+		}
+		if colHeight > maxColHeight {
+			maxColHeight = colHeight
+		}
+	}
+
+	return maxColHeight
 }
 
 // Navigation click constants
@@ -489,12 +528,14 @@ func (m Model) findClickedNav(clickX, clickY int) int {
 		return navClickNone
 	}
 
-	// Box dimensions (must match render.go)
+	// Box dimensions (must match view.go - now uses dynamic width based on columns)
 	cardWidth := 68
-	boxWidth := cardWidth + 8
+	numCols := m.getDocsColumnCount()
+	contentWidth := (cardWidth+4)*numCols + (numCols-1)*2
+	boxWidth := contentWidth + 8
 	boxLeft := (m.width - boxWidth) / 2
 
-	// Fixed height calculation (must match render.go)
+	// Fixed height calculation (must match view.go)
 	fixedHeight := m.height - 6
 	if fixedHeight < 15 {
 		fixedHeight = 15
@@ -530,15 +571,18 @@ func (m Model) findClickedNav(clickX, clickY int) int {
 }
 
 // findClickedDoc returns the index of the doc at the click position, or -1
+// Supports multi-column layout
 func (m Model) findClickedDoc(clickX, clickY int) int {
 	docs := m.getDocsForSelectedCategory()
 	if len(docs) == 0 {
 		return -1
 	}
 
-	// Box dimensions (must match render.go)
+	// Box dimensions (must match view.go - now uses dynamic width based on columns)
 	cardWidth := 68
-	boxWidth := cardWidth + 8
+	numCols := m.getDocsColumnCount()
+	contentWidth := (cardWidth+4)*numCols + (numCols-1)*2
+	boxWidth := contentWidth + 8
 
 	// Calculate box position (centered)
 	boxLeft := (m.width - boxWidth) / 2
@@ -549,59 +593,25 @@ func (m Model) findClickedDoc(clickX, clickY int) int {
 		return -1
 	}
 
-	// Calculate content layout
-	maxContentHeight := m.height - 8
-	if maxContentHeight < 10 {
-		maxContentHeight = 10
-	}
-
-	// Build the same lines array structure as render does
-	// Header: title(1) + blank(1) + nav bar(1) + blank(1) + separator(1) + blank(1) = 6 lines
-	headerLines := 6
-
-	// Calculate card line ranges (start line index for each card in the lines array)
-	cardStarts := make([]int, len(docs))
-	currentLine := headerLines
-	for i, doc := range docs {
-		cardStarts[i] = currentLine
-		// Card height: border(2) + title(1) + filepath(1) + description(0-3) + keyfiles(1)
-		cardHeight := 5 // border top/bottom + title + filepath + key files
-		if doc.Description != "" {
-			descLines := (len(doc.Description) / 60) + 1
-			if descLines > 3 {
-				descLines = 3
-			}
-			cardHeight += descLines
-		}
-		currentLine += cardHeight
-	}
-	totalLines := currentLine
-
-	// Calculate scroll bounds
-	scrollOffset := m.docsScrollOffset
-	maxScroll := totalLines - maxContentHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
-
-	// Fixed height calculation (must match render.go)
+	// Fixed height calculation (must match view.go)
 	fixedHeight := m.height - 6
 	if fixedHeight < 15 {
 		fixedHeight = 15
 	}
 	boxTop := (m.height - fixedHeight) / 2
 
-	// Calculate which line in the lines array was clicked
+	// Header: title(1) + blank(1) + nav bar(1) + blank(1) + separator(1) + blank(1) = 6 lines
+	headerLines := 6
+
+	// Calculate content Y position (within scrollable area)
 	// From click Y: subtract boxTop, border(1), padding(1)
 	contentY := clickY - boxTop - 2 // 2 = border + padding
 
+	// Account for header
+	contentY -= headerLines
+
 	// Account for "more above" indicator
+	scrollOffset := m.docsScrollOffset
 	if scrollOffset > 0 {
 		contentY-- // first visible line is "more above"
 	}
@@ -610,14 +620,64 @@ func (m Model) findClickedDoc(clickX, clickY int) int {
 		return -1
 	}
 
-	// The clicked line in the lines array
+	// The clicked line in the content area (accounting for scroll)
 	clickedLineIdx := scrollOffset + contentY
 
-	// Find which card contains this line
-	for i := len(docs) - 1; i >= 0; i-- {
-		if clickedLineIdx >= cardStarts[i] {
+	if numCols == 1 {
+		// Single column: simple line-to-doc mapping
+		currentLine := 0
+		for i, doc := range docs {
+			cardHeight := m.getCardHeight(doc)
+			if clickedLineIdx < currentLine+cardHeight {
+				return i
+			}
+			currentLine += cardHeight
+		}
+		return -1
+	}
+
+	// Multi-column: determine which column was clicked
+	// Content starts at boxLeft + border(1) + padding(2) = boxLeft + 3
+	contentLeft := boxLeft + 3
+	relativeX := clickX - contentLeft
+
+	// Each column is cardWidth+4 wide, with 2-char gap between
+	colWidth := cardWidth + 4
+	colGap := 2
+	fullColWidth := colWidth + colGap
+
+	clickedCol := relativeX / fullColWidth
+	if clickedCol >= numCols {
+		clickedCol = numCols - 1
+	}
+	if clickedCol < 0 {
+		clickedCol = 0
+	}
+
+	// Check if click is in the gap between columns
+	posInCol := relativeX % fullColWidth
+	if posInCol >= colWidth {
+		return -1 // Clicked in the gap
+	}
+
+	// Calculate docs per column
+	docsPerCol := (len(docs) + numCols - 1) / numCols
+
+	// Find which doc within this column based on Y position
+	startDocIdx := clickedCol * docsPerCol
+	endDocIdx := startDocIdx + docsPerCol
+	if endDocIdx > len(docs) {
+		endDocIdx = len(docs)
+	}
+
+	// Calculate line positions within this column
+	currentLine := 0
+	for i := startDocIdx; i < endDocIdx; i++ {
+		cardHeight := m.getCardHeight(docs[i])
+		if clickedLineIdx < currentLine+cardHeight {
 			return i
 		}
+		currentLine += cardHeight
 	}
 
 	return -1

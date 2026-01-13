@@ -381,10 +381,36 @@ func (m Model) renderAddDocOverlay(background string) string {
 	)
 }
 
+// getDocsColumnCount returns how many columns to use based on terminal aspect ratio
+func (m Model) getDocsColumnCount() int {
+	// Card width (68) + padding (8) + gap between columns (2)
+	colWidth := 78
+
+	// Use aspect ratio to determine columns - wider terminals get more columns
+	// Also ensure we have enough absolute width for the columns
+	if m.width >= m.height*3 && m.width >= colWidth*3 {
+		return 3
+	}
+	if m.width >= m.height*2 && m.width >= colWidth*2 {
+		return 2
+	}
+	return 1
+}
+
 // renderContextDocsOverlay renders the v2 documentation-first context docs as cards
+// Supports multi-column layout for wide terminals
 func (m Model) renderContextDocsOverlay(background string) string {
 	// Card width for description wrapping
 	cardWidth := 68
+
+	// Calculate column count based on terminal aspect ratio
+	numCols := m.getDocsColumnCount()
+
+	// Calculate total content width: cards + padding + gaps between columns
+	// Each card has width cardWidth, plus 4 for padding (2 each side from card style)
+	// Gap between columns is 2 spaces
+	contentWidth := (cardWidth+4)*numCols + (numCols-1)*2
+	boxWidth := contentWidth + 8 // Add box padding (4) and border (4)
 
 	titleStyle := styles.Title
 	separatorStyle := styles.Faint
@@ -410,7 +436,7 @@ func (m Model) renderContextDocsOverlay(background string) string {
 	// === STICKY HEADER (not scrolled) ===
 	var headerLines []string
 
-	// Title with copy feedback
+	// Title with copy feedback - centered across full width
 	titleLine := titleStyle.Render("Context Docs")
 	if m.statusMessage != "" && strings.HasPrefix(m.statusMessage, "Copied:") {
 		titleLine += "  " + copiedStyle.Render(m.statusMessage)
@@ -452,15 +478,16 @@ func (m Model) renderContextDocsOverlay(background string) string {
 
 		navLine := prevText + divider + currText + divider + nextText
 
-		// Center the navigation bar
-		centeredNav := lipgloss.NewStyle().Width(cardWidth).Align(lipgloss.Center).Render(navLine)
+		// Center the navigation bar across full content width
+		centeredNav := lipgloss.NewStyle().Width(contentWidth).Align(lipgloss.Center).Render(navLine)
 		headerLines = append(headerLines, centeredNav)
 		headerLines = append(headerLines, "")
-		headerLines = append(headerLines, separatorStyle.Render("────────────────────────────────────────────────────────────────"))
+		// Separator spans full content width
+		headerLines = append(headerLines, separatorStyle.Render(strings.Repeat("─", contentWidth)))
 		headerLines = append(headerLines, "")
 	}
 
-	// === SCROLLABLE CONTENT (cards only) ===
+	// === SCROLLABLE CONTENT (cards in columns) ===
 	var cardLines []string
 
 	// Get docs for selected category
@@ -475,8 +502,22 @@ func (m Model) renderContextDocsOverlay(background string) string {
 		cardLines = append(cardLines, "")
 		cardLines = append(cardLines, metaStyle.Render("Use h/l to switch categories, or 'a' to add a doc."))
 	} else {
-		// Render each doc as a card
+		// Calculate docs per column (column-first ordering)
+		docsPerCol := (len(docs) + numCols - 1) / numCols // Round up
+
+		// Render cards into separate column buffers
+		columns := make([][]string, numCols)
+		for i := range columns {
+			columns[i] = []string{}
+		}
+
 		for docIdx, doc := range docs {
+			// Column-first ordering: doc 0,1,2 in col 0, doc 3,4,5 in col 1, etc.
+			colIdx := docIdx / docsPerCol
+			if colIdx >= numCols {
+				colIdx = numCols - 1
+			}
+
 			isSelected := docIdx == m.docCursor
 
 			// Build card content
@@ -557,10 +598,35 @@ func (m Model) renderContextDocsOverlay(background string) string {
 				renderedCard = normalCardStyle.Render(cardContentStr)
 			}
 
-			// Add card lines
+			// Add card lines to the appropriate column
 			for _, line := range strings.Split(renderedCard, "\n") {
-				cardLines = append(cardLines, line)
+				columns[colIdx] = append(columns[colIdx], line)
 			}
+		}
+
+		// Join columns horizontally line by line
+		// First, find the max height across all columns
+		maxColHeight := 0
+		for _, col := range columns {
+			if len(col) > maxColHeight {
+				maxColHeight = len(col)
+			}
+		}
+
+		// Build combined lines by joining corresponding lines from each column
+		emptyCard := strings.Repeat(" ", cardWidth+4) // Width of a card including padding
+		colGap := "  "                                // Gap between columns
+
+		for lineIdx := 0; lineIdx < maxColHeight; lineIdx++ {
+			var rowParts []string
+			for _, col := range columns {
+				if lineIdx < len(col) {
+					rowParts = append(rowParts, col[lineIdx])
+				} else {
+					rowParts = append(rowParts, emptyCard)
+				}
+			}
+			cardLines = append(cardLines, strings.Join(rowParts, colGap))
 		}
 	}
 
@@ -643,7 +709,7 @@ func (m Model) renderContextDocsOverlay(background string) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("205")).
 		Padding(1, 2).
-		Width(cardWidth + 8).
+		Width(boxWidth).
 		Height(fixedHeight)
 
 	docsBox := boxStyle.Render(content.String())
