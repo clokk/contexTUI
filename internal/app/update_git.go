@@ -31,6 +31,12 @@ func (m Model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activePane == TreePane {
 				if m.gitStatusCursor < len(m.gitChanges)-1 {
 					m.gitStatusCursor++
+					// Update viewport content and auto-scroll
+					m.gitList.SetContent(m.renderGitFileList())
+					cursorLine := m.gitCursorToLine(m.gitStatusCursor)
+					if cursorLine >= m.gitList.YOffset+m.gitList.Height {
+						m.gitList.LineDown(1)
+					}
 					return m.UpdateGitStatusPreview()
 				}
 			} else {
@@ -42,6 +48,12 @@ func (m Model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activePane == TreePane {
 				if m.gitStatusCursor > 0 {
 					m.gitStatusCursor--
+					// Update viewport content and auto-scroll
+					m.gitList.SetContent(m.renderGitFileList())
+					cursorLine := m.gitCursorToLine(m.gitStatusCursor)
+					if cursorLine < m.gitList.YOffset {
+						m.gitList.LineUp(1)
+					}
 					return m.UpdateGitStatusPreview()
 				}
 			} else {
@@ -178,22 +190,30 @@ func (m Model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Mouse wheel scrolling
 		if msg.Button == tea.MouseButtonWheelUp {
-			if m.activePane == PreviewPane {
+			if m.activePane == TreePane {
+				m.gitList.LineUp(3)
+			} else {
 				m.preview.LineUp(3)
 			}
 		} else if msg.Button == tea.MouseButtonWheelDown {
-			if m.activePane == PreviewPane {
+			if m.activePane == TreePane {
+				m.gitList.LineDown(3)
+			} else {
 				m.preview.LineDown(3)
 			}
 		}
 
 		// Mouse click on file list
 		if msg.Button == tea.MouseButtonLeft && m.activePane == TreePane {
-			headerOffset := 2
+			// Account for: app header (1) + border (1) + "Git Status\n\n" (2) = 4
+			headerOffset := 4
 			clickedLine := msg.Y - headerOffset
-			clickedIndex := m.gitLineToIndex(clickedLine)
+			// Add viewport offset to get actual content line
+			contentLine := clickedLine + m.gitList.YOffset
+			clickedIndex := m.gitLineToIndex(contentLine)
 			if clickedIndex >= 0 && clickedIndex < len(m.gitChanges) {
 				m.gitStatusCursor = clickedIndex
+				m.gitList.SetContent(m.renderGitFileList())
 				return m.UpdateGitStatusPreview()
 			}
 		}
@@ -217,16 +237,93 @@ func (m Model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case QuickDiffLoadedMsg:
+		// Ignore if this is for an old request (user navigated away)
+		if msg.RequestID != m.diffRequestID {
+			return m, nil
+		}
+
+		// Display the quick diff
+		m.preview.SetContent(msg.Content)
+		m.previewPath = msg.Path
+		m.previewLines = strings.Split(msg.Content, "\n")
+		m.loading = false
+		m.preview.GotoTop()
+
+		// Cache the quick diff
+		if m.diffCache == nil {
+			m.diffCache = make(map[DiffCacheKey]CachedDiff)
+		}
+		quickKey := DiffCacheKey{Path: msg.Path, Staged: msg.Staged, ContextSize: quickDiffContext}
+		m.diffCache[quickKey] = CachedDiff{
+			Content:     msg.Content,
+			ModTime:     msg.ModTime,
+			ContextSize: quickDiffContext,
+		}
+
+		// Trigger background full diff load
+		m.fullDiffLoading = msg.Path
+		m.fullDiffStaged = msg.Staged
+
+		// Extract relative path for git command
+		relPath, _ := filepath.Rel(m.gitRepoRoot, msg.Path)
+		previewWidth := m.preview.Width
+		requestID := msg.RequestID
+		staged := msg.Staged
+		repoRoot := m.gitRepoRoot
+
+		return m, func() tea.Msg {
+			return LoadFullDiff(repoRoot, relPath, staged, previewWidth, requestID)
+		}
+
+	case FullDiffLoadedMsg:
+		// Ignore if this is for an old request (user navigated away)
+		if msg.RequestID != m.diffRequestID {
+			return m, nil
+		}
+
+		// Ignore if no longer loading for this file
+		if m.fullDiffLoading != msg.Path {
+			return m, nil
+		}
+
+		// Preserve scroll position for seamless upgrade
+		currentScrollY := m.preview.YOffset
+
+		// Update preview with full diff
+		m.preview.SetContent(msg.Content)
+		m.previewPath = msg.Path
+		m.previewLines = strings.Split(msg.Content, "\n")
+
+		// Restore scroll position
+		m.preview.SetYOffset(currentScrollY)
+
+		// Cache the full diff
+		if m.diffCache == nil {
+			m.diffCache = make(map[DiffCacheKey]CachedDiff)
+		}
+		fullKey := DiffCacheKey{Path: msg.Path, Staged: msg.Staged, ContextSize: fullDiffContext}
+		m.diffCache[fullKey] = CachedDiff{
+			Content:     msg.Content,
+			ModTime:     msg.ModTime,
+			ContextSize: fullDiffContext,
+		}
+
+		// Clear loading state
+		m.fullDiffLoading = ""
+
+		return m, nil
 	}
 	return m, nil
 }
 
-// gitLineToIndex converts a clicked line number to an index in gitChanges
+// gitLineToIndex converts a content line number to an index in gitChanges
 // This accounts for category headers in the rendered output
 func (m Model) gitLineToIndex(clickedLine int) int {
 	staged, unstaged, untracked := m.CategorizeGitChanges()
 
-	currentLine := 2 // After "Git Status\n\n"
+	currentLine := 0 // Viewport content starts at line 0
 	idx := 0
 
 	if len(staged) > 0 {
@@ -279,4 +376,53 @@ func (m Model) CategorizeGitChanges() (staged, unstaged, untracked []git.FileSta
 		}
 	}
 	return
+}
+
+// gitCursorToLine converts a cursor index into the line number in the rendered git list
+// This accounts for section headers and blank lines between sections
+func (m Model) gitCursorToLine(cursor int) int {
+	staged, unstaged, untracked := m.CategorizeGitChanges()
+
+	line := 0
+	idx := 0
+
+	// Staged section
+	if len(staged) > 0 {
+		line++ // "Staged Changes" header
+		for range staged {
+			if idx == cursor {
+				return line
+			}
+			line++
+			idx++
+		}
+		line++ // Blank line after section
+	}
+
+	// Unstaged section
+	if len(unstaged) > 0 {
+		line++ // "Changes not staged" header
+		for range unstaged {
+			if idx == cursor {
+				return line
+			}
+			line++
+			idx++
+		}
+		line++ // Blank line after section
+	}
+
+	// Untracked section
+	if len(untracked) > 0 {
+		line++ // "Untracked files" header
+		for range untracked {
+			if idx == cursor {
+				return line
+			}
+			line++
+			idx++
+		}
+	}
+
+	return line
 }

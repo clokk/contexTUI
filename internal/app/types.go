@@ -80,6 +80,11 @@ type Model struct {
 	gitStatusMode   bool                      // True when showing git status view
 	gitStatusCursor int                       // Cursor in git status view
 	gitChanges      []git.FileStatus          // Flat list of all changes for git view
+	gitList         viewport.Model            // Scrollable git file list viewport
+	diffCache       map[DiffCacheKey]CachedDiff // Cache for diff content
+	diffRequestID   int64                     // Current diff request ID for cancellation
+	fullDiffLoading string                    // Path of file whose full diff is loading
+	fullDiffStaged  bool                      // Whether the loading full diff is staged
 	gitBranch       string                    // Current branch name
 	gitAhead        int                       // Commits ahead of upstream
 	gitBehind       int                       // Commits behind upstream
@@ -140,6 +145,38 @@ type WatchNextMsg struct{}
 // GitFetchDoneMsg is sent when git fetch completes
 type GitFetchDoneMsg struct {
 	Err error
+}
+
+// QuickDiffLoadedMsg is sent when the quick (small context) diff is ready
+type QuickDiffLoadedMsg struct {
+	Path      string
+	Content   string
+	ModTime   time.Time
+	Staged    bool
+	RequestID int64 // To match against current request for cancellation
+}
+
+// FullDiffLoadedMsg is sent when the full (large context) diff is ready
+type FullDiffLoadedMsg struct {
+	Path      string
+	Content   string
+	ModTime   time.Time
+	Staged    bool
+	RequestID int64
+}
+
+// DiffCacheKey uniquely identifies a cached diff
+type DiffCacheKey struct {
+	Path        string
+	Staged      bool
+	ContextSize int // 10 for quick, 99999 for full
+}
+
+// CachedDiff stores diff content with metadata
+type CachedDiff struct {
+	Content     string
+	ModTime     time.Time
+	ContextSize int
 }
 
 // SaveRegistryMsg signals that the debounced save timer fired

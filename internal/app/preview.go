@@ -19,6 +19,10 @@ import (
 const (
 	maxPreviewSize  = 512 * 1024 // 512KB - files larger than this are truncated
 	maxPreviewLines = 2000       // Max lines to show for large files
+
+	// Diff context sizes for progressive loading
+	quickDiffContext = 10    // Quick initial load - small context
+	fullDiffContext  = 99999 // Full load - entire file context
 )
 
 // UpdatePreview loads the preview for the currently selected entry
@@ -138,6 +142,7 @@ func LoadFilePreview(e Entry, previewWidth int) tea.Cmd {
 }
 
 // UpdateGitStatusPreview loads the diff preview for the currently selected git change
+// Uses progressive loading: quick diff first, then full diff in background
 func (m Model) UpdateGitStatusPreview() (Model, tea.Cmd) {
 	if m.gitStatusCursor >= len(m.gitChanges) {
 		return m, nil
@@ -146,33 +151,75 @@ func (m Model) UpdateGitStatusPreview() (Model, tea.Cmd) {
 	change := m.gitChanges[m.gitStatusCursor]
 	fullPath := filepath.Join(m.gitRepoRoot, change.Path)
 
-	// Set loading state
+	// Untracked files - show file content (no diff exists)
+	if change.Status == "?" {
+		m.loading = true
+		m.previewPath = fullPath
+		m.preview.SetContent("Loading...")
+
+		previewWidth := m.preview.Width
+		fileName := filepath.Base(change.Path)
+		return m, func() tea.Msg {
+			return LoadFileContent(fullPath, fileName, previewWidth)
+		}
+	}
+
+	// Generate unique request ID for cancellation
+	m.diffRequestID = time.Now().UnixNano()
+	requestID := m.diffRequestID
+
+	// Capture values for async commands
+	previewWidth := m.preview.Width
+	repoRoot := m.gitRepoRoot
+	staged := change.Staged
+	relPath := change.Path
+
+	// Initialize cache if needed
+	if m.diffCache == nil {
+		m.diffCache = make(map[DiffCacheKey]CachedDiff)
+	}
+
+	// Check cache for full diff first (best case - instant)
+	fullKey := DiffCacheKey{Path: fullPath, Staged: staged, ContextSize: fullDiffContext}
+	if cached, ok := m.diffCache[fullKey]; ok {
+		m.preview.SetContent(cached.Content)
+		m.previewPath = fullPath
+		m.previewLines = strings.Split(cached.Content, "\n")
+		m.loading = false
+		m.preview.GotoTop()
+		return m, nil
+	}
+
+	// Check cache for quick diff (show it, then load full in background)
+	quickKey := DiffCacheKey{Path: fullPath, Staged: staged, ContextSize: quickDiffContext}
+	if cached, ok := m.diffCache[quickKey]; ok {
+		m.preview.SetContent(cached.Content)
+		m.previewPath = fullPath
+		m.previewLines = strings.Split(cached.Content, "\n")
+		m.loading = false
+		m.preview.GotoTop()
+
+		// Trigger background full diff load
+		m.fullDiffLoading = fullPath
+		m.fullDiffStaged = staged
+		return m, func() tea.Msg {
+			return LoadFullDiff(repoRoot, relPath, staged, previewWidth, requestID)
+		}
+	}
+
+	// No cache - load quick diff first
 	m.loading = true
 	m.previewPath = fullPath
 	m.preview.SetContent("Loading...")
 
-	// Capture values for async command
-	previewWidth := m.preview.Width
-	repoRoot := m.gitRepoRoot
-	staged := change.Staged
-	status := change.Status
-	relPath := change.Path
-	fileName := filepath.Base(change.Path)
-
-	// Return async command
 	return m, func() tea.Msg {
-		// Untracked files - show file content (no diff exists)
-		if status == "?" {
-			return LoadFileContent(fullPath, fileName, previewWidth)
-		}
-		// All other changes - show diff
-		return LoadGitDiff(repoRoot, relPath, staged, previewWidth)
+		return LoadQuickDiff(repoRoot, relPath, staged, previewWidth, requestID)
 	}
 }
 
-// LoadGitDiff runs git diff and returns the diff output for a file
+// LoadGitDiff runs git diff and returns the diff output for a file (legacy, uses full context)
 func LoadGitDiff(repoRoot, filePath string, staged bool, previewWidth int) FileLoadedMsg {
-	diffText, err := git.LoadDiff(repoRoot, filePath, staged)
+	diffText, err := git.LoadDiff(repoRoot, filePath, staged, fullDiffContext)
 	if err != nil || diffText == "" {
 		return FileLoadedMsg{
 			Path:    filepath.Join(repoRoot, filePath),
@@ -187,6 +234,50 @@ func LoadGitDiff(repoRoot, filePath string, staged bool, previewWidth int) FileL
 		Path:    filepath.Join(repoRoot, filePath),
 		Content: highlighted,
 		ModTime: time.Now(),
+	}
+}
+
+// LoadQuickDiff loads a diff with minimal context for fast initial display
+func LoadQuickDiff(repoRoot, filePath string, staged bool, previewWidth int, requestID int64) QuickDiffLoadedMsg {
+	diffText, err := git.LoadDiff(repoRoot, filePath, staged, quickDiffContext)
+	if err != nil || diffText == "" {
+		return QuickDiffLoadedMsg{
+			Path:      filepath.Join(repoRoot, filePath),
+			Content:   "No diff available",
+			RequestID: requestID,
+			Staged:    staged,
+		}
+	}
+
+	highlighted := HighlightDiff(diffText, previewWidth)
+	return QuickDiffLoadedMsg{
+		Path:      filepath.Join(repoRoot, filePath),
+		Content:   highlighted,
+		ModTime:   time.Now(),
+		RequestID: requestID,
+		Staged:    staged,
+	}
+}
+
+// LoadFullDiff loads a diff with complete context for seamless upgrade
+func LoadFullDiff(repoRoot, filePath string, staged bool, previewWidth int, requestID int64) FullDiffLoadedMsg {
+	diffText, err := git.LoadDiff(repoRoot, filePath, staged, fullDiffContext)
+	if err != nil || diffText == "" {
+		return FullDiffLoadedMsg{
+			Path:      filepath.Join(repoRoot, filePath),
+			Content:   "No diff available",
+			RequestID: requestID,
+			Staged:    staged,
+		}
+	}
+
+	highlighted := HighlightDiff(diffText, previewWidth)
+	return FullDiffLoadedMsg{
+		Path:      filepath.Join(repoRoot, filePath),
+		Content:   highlighted,
+		ModTime:   time.Now(),
+		RequestID: requestID,
+		Staged:    staged,
 	}
 }
 

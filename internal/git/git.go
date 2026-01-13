@@ -149,12 +149,15 @@ func Fetch(repoRoot string) error {
 }
 
 // LoadDiff runs git diff and returns the diff output for a file
-func LoadDiff(repoRoot, filePath string, staged bool) (string, error) {
+// contextLines controls the number of context lines around changes (-U flag)
+func LoadDiff(repoRoot, filePath string, staged bool, contextLines int) (string, error) {
+	contextFlag := "-U" + strconv.Itoa(contextLines)
+
 	var args []string
 	if staged {
-		args = []string{"-C", repoRoot, "diff", "--cached", "--", filePath}
+		args = []string{"-C", repoRoot, "diff", contextFlag, "--cached", "--", filePath}
 	} else {
-		args = []string{"-C", repoRoot, "diff", "--", filePath}
+		args = []string{"-C", repoRoot, "diff", contextFlag, "--", filePath}
 	}
 
 	cmd := exec.Command("git", args...)

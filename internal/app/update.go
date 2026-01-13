@@ -365,6 +365,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Refresh git status when entering
 					m.gitStatus, m.gitChanges = git.LoadStatus(m.gitRepoRoot)
 					m.gitDirStatus = git.ComputeDirStatus(m.gitStatus)
+					// Initialize viewport content and reset scroll
+					m.gitList.SetContent(m.renderGitFileList())
+					m.gitList.GotoTop()
 					// Load preview for first item if there are changes
 					if len(m.gitChanges) > 0 {
 						var cmd tea.Cmd
@@ -404,6 +407,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tree.SetContent(m.RenderTree())
 			m.preview = viewport.New(previewWidth, paneHeight)
 			m.preview.SetContent("Select a file to preview")
+			// gitList is 2 lines shorter to account for "Git Status\n\n" header
+			m.gitList = viewport.New(treeWidth, paneHeight-2)
 			m.ready = true
 		} else {
 			m.tree.Width = treeWidth
@@ -411,6 +416,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tree.SetContent(m.RenderTree())
 			m.preview.Width = previewWidth
 			m.preview.Height = paneHeight
+			m.gitList.Width = treeWidth
+			m.gitList.Height = paneHeight - 2
 		}
 	}
 

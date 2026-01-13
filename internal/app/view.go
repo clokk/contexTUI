@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/connorleisz/contexTUI/internal/git"
 	"github.com/connorleisz/contexTUI/internal/ui/styles"
 )
 
@@ -845,111 +844,104 @@ func (m Model) renderHelpOverlay(background string) string {
 	)
 }
 
+// renderGitFileList renders just the categorized file list for the git viewport
+func (m Model) renderGitFileList() string {
+	leftWidth := m.LeftPaneWidth()
+
+	if len(m.gitChanges) == 0 {
+		return styles.Faint.Render("Working tree clean")
+	}
+
+	var b strings.Builder
+
+	// Group by status
+	staged, unstaged, untracked := m.CategorizeGitChanges()
+
+	// Style definitions
+	stagedStyle := lipgloss.NewStyle().Foreground(styles.GitAdded).Bold(true)
+	unstagedStyle := lipgloss.NewStyle().Foreground(styles.GitModified).Bold(true)
+	untrackedStyle := lipgloss.NewStyle().Foreground(styles.GitUntracked)
+	selectedStyle := styles.Selected
+
+	statusStyles := styles.GitStatusStyles()
+
+	idx := 0
+
+	// Render staged changes
+	if len(staged) > 0 {
+		b.WriteString(stagedStyle.Render("Staged Changes"))
+		b.WriteString("\n")
+		for _, c := range staged {
+			var line string
+			if idx == m.gitStatusCursor {
+				line = fmt.Sprintf("  %s %s", c.Status, c.Path)
+				if len(line) < leftWidth-4 {
+					line = line + strings.Repeat(" ", leftWidth-4-len(line))
+				}
+				line = selectedStyle.Render(line)
+			} else {
+				statusStyle := statusStyles[c.Status]
+				line = fmt.Sprintf("  %s %s", statusStyle.Render(c.Status), c.Path)
+			}
+			b.WriteString(line + "\n")
+			idx++
+		}
+		b.WriteString("\n")
+	}
+
+	// Render unstaged changes
+	if len(unstaged) > 0 {
+		b.WriteString(unstagedStyle.Render("Changes not staged"))
+		b.WriteString("\n")
+		for _, c := range unstaged {
+			var line string
+			if idx == m.gitStatusCursor {
+				line = fmt.Sprintf("  %s %s", c.Status, c.Path)
+				if len(line) < leftWidth-4 {
+					line = line + strings.Repeat(" ", leftWidth-4-len(line))
+				}
+				line = selectedStyle.Render(line)
+			} else {
+				statusStyle := statusStyles[c.Status]
+				line = fmt.Sprintf("  %s %s", statusStyle.Render(c.Status), c.Path)
+			}
+			b.WriteString(line + "\n")
+			idx++
+		}
+		b.WriteString("\n")
+	}
+
+	// Render untracked files
+	if len(untracked) > 0 {
+		b.WriteString(untrackedStyle.Render("Untracked files"))
+		b.WriteString("\n")
+		for _, c := range untracked {
+			var line string
+			if idx == m.gitStatusCursor {
+				line = fmt.Sprintf("  %s %s", c.Status, c.Path)
+				if len(line) < leftWidth-4 {
+					line = line + strings.Repeat(" ", leftWidth-4-len(line))
+				}
+				line = selectedStyle.Render(line)
+			} else {
+				line = fmt.Sprintf("  %s %s", untrackedStyle.Render(c.Status), c.Path)
+			}
+			b.WriteString(line + "\n")
+			idx++
+		}
+	}
+
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
 // renderGitStatusView renders the git status view with file list and preview
 func (m Model) renderGitStatusView(paneHeight int) string {
 	leftWidth := m.LeftPaneWidth()
 	rightWidth := m.RightPaneWidth()
 
-	// Left pane: Changed files list
-	var left strings.Builder
-
-	left.WriteString(styles.Header.Render("Git Status"))
-	left.WriteString("\n\n")
-
-	if len(m.gitChanges) == 0 {
-		left.WriteString(styles.Faint.Render("Working tree clean"))
-	} else {
-		// Group by status
-		var staged, unstaged, untracked []git.FileStatus
-
-		for _, c := range m.gitChanges {
-			if c.Status == "?" {
-				untracked = append(untracked, c)
-			} else if c.Staged {
-				staged = append(staged, c)
-			} else {
-				unstaged = append(unstaged, c)
-			}
-		}
-
-		// Style definitions
-		stagedStyle := lipgloss.NewStyle().Foreground(styles.GitAdded).Bold(true)
-		unstagedStyle := lipgloss.NewStyle().Foreground(styles.GitModified).Bold(true)
-		untrackedStyle := lipgloss.NewStyle().Foreground(styles.GitUntracked)
-		selectedStyle := styles.Selected
-
-		statusStyles := styles.GitStatusStyles()
-
-		idx := 0
-
-		// Render staged changes
-		if len(staged) > 0 {
-			left.WriteString(stagedStyle.Render("Staged Changes"))
-			left.WriteString("\n")
-			for _, c := range staged {
-				var line string
-				if idx == m.gitStatusCursor {
-					// For selected line, don't apply status color - use uniform highlight
-					line = fmt.Sprintf("  %s %s", c.Status, c.Path)
-					// Pad line for full highlight
-					if len(line) < leftWidth-4 {
-						line = line + strings.Repeat(" ", leftWidth-4-len(line))
-					}
-					line = selectedStyle.Render(line)
-				} else {
-					statusStyle := statusStyles[c.Status]
-					line = fmt.Sprintf("  %s %s", statusStyle.Render(c.Status), c.Path)
-				}
-				left.WriteString(line + "\n")
-				idx++
-			}
-			left.WriteString("\n")
-		}
-
-		// Render unstaged changes
-		if len(unstaged) > 0 {
-			left.WriteString(unstagedStyle.Render("Changes not staged"))
-			left.WriteString("\n")
-			for _, c := range unstaged {
-				var line string
-				if idx == m.gitStatusCursor {
-					// For selected line, don't apply status color - use uniform highlight
-					line = fmt.Sprintf("  %s %s", c.Status, c.Path)
-					if len(line) < leftWidth-4 {
-						line = line + strings.Repeat(" ", leftWidth-4-len(line))
-					}
-					line = selectedStyle.Render(line)
-				} else {
-					statusStyle := statusStyles[c.Status]
-					line = fmt.Sprintf("  %s %s", statusStyle.Render(c.Status), c.Path)
-				}
-				left.WriteString(line + "\n")
-				idx++
-			}
-			left.WriteString("\n")
-		}
-
-		// Render untracked files
-		if len(untracked) > 0 {
-			left.WriteString(untrackedStyle.Render("Untracked files"))
-			left.WriteString("\n")
-			for _, c := range untracked {
-				var line string
-				if idx == m.gitStatusCursor {
-					// For selected line, don't apply status color - use uniform highlight
-					line = fmt.Sprintf("  %s %s", c.Status, c.Path)
-					if len(line) < leftWidth-4 {
-						line = line + strings.Repeat(" ", leftWidth-4-len(line))
-					}
-					line = selectedStyle.Render(line)
-				} else {
-					line = fmt.Sprintf("  %s %s", untrackedStyle.Render(c.Status), c.Path)
-				}
-				left.WriteString(line + "\n")
-				idx++
-			}
-		}
-	}
+	// Left pane: Header + scrollable file list
+	header := styles.Header.Render("Git Status") + "\n\n"
+	leftContent := header + m.gitList.View()
 
 	// Style the left pane
 	var leftPaneStyle lipgloss.Style
@@ -975,7 +967,7 @@ func (m Model) renderGitStatusView(paneHeight int) string {
 		Height(paneHeight).
 		Padding(0, 1)
 
-	leftPane := leftPaneStyle.Render(left.String())
+	leftPane := leftPaneStyle.Render(leftContent)
 	rightPane := previewStyle.Render(m.preview.View())
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)

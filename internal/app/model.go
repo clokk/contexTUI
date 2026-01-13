@@ -102,6 +102,7 @@ func NewModel(rootPath string) Model {
 		gitAhead:       gitAhead,
 		gitBehind:      gitBehind,
 		gitHasUpstream: gitHasUpstream,
+		diffCache:      make(map[DiffCacheKey]CachedDiff),
 	}
 }
 
