@@ -88,7 +88,7 @@ func (m Model) View() string {
 		preview := previewStyle.Render(m.preview.View())
 
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tree, preview)
-		footer = m.renderBranchStatus() + footerStyle.Render("/ search  g groups  v select  s git  q quit  ? help")
+		footer = m.renderBranchStatus() + footerStyle.Render("/ search  g docs  v select  s git  q quit  ? help")
 	}
 
 	// Prepend status message to footer if present and recent
@@ -741,7 +741,7 @@ func (m Model) renderHelpOverlay(background string) string {
 	content.WriteString(sectionStyle.Render("Views"))
 	content.WriteString("\n")
 	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("s"), descStyle.Render("Git status")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("g"), descStyle.Render("Context groups")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("g"), descStyle.Render("Context docs")))
 	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("/"), descStyle.Render("Search files")))
 	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("v"), descStyle.Render("Copy mode")))
 	content.WriteString("\n")

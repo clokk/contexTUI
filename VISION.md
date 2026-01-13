@@ -31,6 +31,19 @@ A context-aware terminal file browser designed for AI-assisted development workf
 
 The primary purpose is to help developers quickly gather and share file context with AI assistants. Every feature should serve this goal.
 
+### Documentation Over Code
+
+Markdown documentation has a much higher signal-to-token ratio than raw code. A well-written doc can convey intent, architecture, and design decisions in 200 lines that would take 2000+ lines of code to infer.
+
+Treat your AI assistant like a collaborator joining your team. A good teammate doesn't hand someone a codebase without documentation and say "figure it out." They provide:
+
+- **Intent** - Why does this code exist?
+- **Architecture** - How do the pieces fit together?
+- **Entry points** - Where should someone start looking?
+- **Boundaries** - What's in scope, what's not?
+
+This is what context docs provide. Instead of copying 15 code files into a prompt and blowing out the context window, you share documentation that explains the system. The AI can then find specific code when needed.
+
 ### Less is More
 
 - Minimal footprint, maximum utility
@@ -53,9 +66,9 @@ For integrations like git:
 
 ### Composability
 
-- Context groups are file references, not containers
-- Text lives in files, not inline
-- Groups can share files across purposes
+- Context docs are documentation files, not code containers
+- Documentation lives in markdown files with embedded metadata
+- Docs can be shared and copied for AI prompting
 
 ## What It's Not
 
