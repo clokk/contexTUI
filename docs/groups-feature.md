@@ -10,9 +10,9 @@ Handles the context groups overlay UI - displaying, navigating, and copying docu
 
 ## Key Files
 
-- groups.go - Overlay interaction, navigation, and copy logic
-- docgroups.go - Parsing, validation, and registry management
-- render.go - Groups overlay rendering (renderDocGroupsOverlay, renderAddGroupOverlay)
+- internal/app/update_groups.go - Overlay interaction, navigation, and copy logic
+- internal/groups/groups.go - Parsing, validation, and registry management
+- internal/app/view.go - Groups overlay rendering (renderDocGroupsOverlay, renderAddGroupOverlay)
 
 ## Scope
 
@@ -23,6 +23,6 @@ Handles the context groups overlay UI - displaying, navigating, and copying docu
 
 ## Out of Scope
 
-- Markdown parsing logic (see docgroups.go)
-- Git staleness detection (see docgroups.go)
-- Main application state (see model.go)
+- Markdown parsing logic (see internal/groups/groups.go)
+- Git staleness detection (see internal/groups/groups.go)
+- Main application state (see internal/app/model.go)

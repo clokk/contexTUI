@@ -9,10 +9,10 @@ This document describes the vision and implementation plan for Context Groups v2
 
 ## Key Files
 
-- types.go - ContextGroup struct and model definition
-- groups.go - Parsing logic and UI interaction
-- render.go - Groups overlay rendering
-- clipboard.go - Copy functionality
+- internal/app/types.go - ContextGroup struct and model definition
+- internal/groups/groups.go - Parsing logic and registry management
+- internal/app/view.go - Groups overlay rendering
+- internal/clipboard/clipboard.go - Copy functionality
 
 ---
 

@@ -9,10 +9,10 @@ contexTUI provides deep git integration to help developers understand repository
 
 ## Key Files
 
-- git.go - Git operations (status, fetch, branch info)
-- types.go - GitFileStatus struct and related types
-- model.go - Git state initialization
-- render.go - Git status rendering (badges, branch bar, status view)
+- internal/git/git.go - Git operations (status, fetch, branch info)
+- internal/app/types.go - GitFileStatus struct and related types
+- internal/app/model.go - Git state initialization
+- internal/app/view.go - Git status rendering (badges, branch bar, status view)
 
 ---
 

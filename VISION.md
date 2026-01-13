@@ -10,8 +10,8 @@ The product vision and philosophy behind contexTUI - a context-aware terminal fi
 ## Key Files
 
 - main.go - Application entry point
-- model.go - Core application state and logic
-- types.go - Data structures
+- internal/app/model.go - Core application state and logic
+- internal/app/types.go - Data structures
 
 ## The Shift
 
