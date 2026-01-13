@@ -21,7 +21,7 @@ const StructuringPrompt = `Find all markdown files in this project containing th
 
 For each file, read .context-docs.md to understand the required structure,
 then update the file to include:
-- **Category:** (Meta, Feature, or custom category)
+- **Category:** Use your judgment based on the project. Defaults are "Meta" (project-level/architecture docs) and "Feature" (feature-specific docs). If a different category better fits the content (e.g., "API", "Infrastructure", "Testing"), suggest it, explain your reasoning, and ask the user to confirm before applying.
 - **Status:** Active
 - ## Description section
 - ## Key Files section (IMPORTANT: must use list format, not tables)
@@ -207,13 +207,30 @@ func (m Model) updateDocs(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Remove from ByCategory map
 				catID := strings.ToLower(strings.ReplaceAll(doc.Category, " ", "-"))
 				if catID == "" {
-					catID = "miscellaneous"
+					catID = "uncategorized"
 				}
 				catDocs := m.docRegistry.ByCategory[catID]
 				for i, d := range catDocs {
 					if d.FilePath == doc.FilePath {
 						m.docRegistry.ByCategory[catID] = append(catDocs[:i], catDocs[i+1:]...)
 						break
+					}
+				}
+
+				// If uncategorized is now empty, remove it from Categories list
+				if catID == "uncategorized" && len(m.docRegistry.ByCategory["uncategorized"]) == 0 {
+					for i, cat := range m.docRegistry.Categories {
+						if cat.ID == "uncategorized" {
+							m.docRegistry.Categories = append(m.docRegistry.Categories[:i], m.docRegistry.Categories[i+1:]...)
+							// Adjust selected category if it was pointing to the removed one
+							if m.selectedCategory >= len(m.docRegistry.Categories) {
+								m.selectedCategory = len(m.docRegistry.Categories) - 1
+							}
+							if m.selectedCategory < 0 {
+								m.selectedCategory = 0
+							}
+							break
+						}
 					}
 				}
 
@@ -610,6 +627,7 @@ func (m Model) updateAddDoc(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc":
 			m.addingDoc = false
+			m.selectedAddFiles = make(map[string]bool) // Clear selections
 			return m, nil
 
 		case "up", "k":
@@ -626,10 +644,129 @@ func (m Model) updateAddDoc(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "enter":
-			// Add the selected file as a context doc
+		case " ":
+			// Toggle selection of current file for multi-add
 			if m.addDocCursor < totalFiles {
-				selectedPath := m.availableMdFiles[m.addDocCursor]
+				filePath := m.availableMdFiles[m.addDocCursor]
+				if m.selectedAddFiles[filePath] {
+					delete(m.selectedAddFiles, filePath)
+					m.statusMessage = fmt.Sprintf("Deselected (%d total)", len(m.selectedAddFiles))
+				} else {
+					m.selectedAddFiles[filePath] = true
+					m.statusMessage = fmt.Sprintf("Selected (%d total)", len(m.selectedAddFiles))
+				}
+				m.statusMessageTime = time.Now()
+				return m, ClearStatusAfter(2 * time.Second)
+			}
+			return m, nil
+
+		case "enter":
+			// Determine which files to add
+			var filesToAdd []string
+			if len(m.selectedAddFiles) > 0 {
+				// Add all selected files
+				for path := range m.selectedAddFiles {
+					filesToAdd = append(filesToAdd, path)
+				}
+			} else if m.addDocCursor < totalFiles {
+				// Add single file at cursor
+				filesToAdd = []string{m.availableMdFiles[m.addDocCursor]}
+			}
+
+			if len(filesToAdd) == 0 {
+				return m, nil
+			}
+
+			// Initialize registry if needed
+			if m.docRegistry == nil {
+				m.docRegistry = &groups.ContextDocRegistry{
+					Categories: groups.DefaultCategories(),
+					Docs:       []groups.ContextDoc{},
+					ByCategory: make(map[string][]groups.ContextDoc),
+				}
+			}
+
+			// Add each file
+			addedCount := 0
+			incompleteCount := 0
+			var lastError error
+			for _, selectedPath := range filesToAdd {
+				// Parse the doc
+				doc, err := groups.ParseContextDoc(m.rootPath, selectedPath)
+				if err != nil {
+					lastError = err
+					continue
+				}
+
+				// Validate and check staleness
+				doc.ValidateKeyFiles(m.rootPath)
+				doc.CheckStaleness(m.rootPath)
+
+				// If file is missing required structure, insert tag
+				if len(doc.MissingFields) > 0 {
+					insertStructureTag(m.rootPath, selectedPath)
+					incompleteCount++
+				}
+
+				// Add to registry
+				m.docRegistry.Docs = append(m.docRegistry.Docs, *doc)
+
+				// Update ByCategory map
+				catID := strings.ToLower(strings.ReplaceAll(doc.Category, " ", "-"))
+				if catID == "" {
+					catID = "uncategorized"
+				}
+				m.docRegistry.ByCategory[catID] = append(m.docRegistry.ByCategory[catID], *doc)
+
+				// If adding to uncategorized, ensure category exists in list
+				if catID == "uncategorized" {
+					hasUncategorized := false
+					for _, cat := range m.docRegistry.Categories {
+						if cat.ID == "uncategorized" {
+							hasUncategorized = true
+							break
+						}
+					}
+					if !hasUncategorized {
+						m.docRegistry.Categories = append([]groups.Category{{ID: "uncategorized", Name: "Uncategorized"}}, m.docRegistry.Categories...)
+					}
+				}
+				addedCount++
+			}
+
+			// Save registry
+			if err := groups.SaveContextDocRegistry(m.rootPath, m.docRegistry); err != nil {
+				m.statusMessage = fmt.Sprintf("Error saving: %v", err)
+			} else if addedCount == 0 && lastError != nil {
+				m.statusMessage = fmt.Sprintf("Error: %v", lastError)
+			} else if incompleteCount > 0 {
+				m.statusMessage = fmt.Sprintf("Added %d (%d incomplete)! Press 'p' for structuring prompt", addedCount, incompleteCount)
+			} else {
+				m.statusMessage = fmt.Sprintf("Added %d doc(s)!", addedCount)
+			}
+
+			// Clear selections
+			m.selectedAddFiles = make(map[string]bool)
+			m.statusMessageTime = time.Now()
+			m.addingDoc = false
+			return m, ClearStatusAfter(5 * time.Second)
+		}
+
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			// Find clicked file and add it
+			clickedIdx := m.findClickedAddDocFile(msg.X, msg.Y)
+			if clickedIdx >= 0 && clickedIdx < totalFiles {
+				selectedPath := m.availableMdFiles[clickedIdx]
+
+				// Initialize registry if needed
+				if m.docRegistry == nil {
+					m.docRegistry = &groups.ContextDocRegistry{
+						Categories: groups.DefaultCategories(),
+						Docs:       []groups.ContextDoc{},
+						ByCategory: make(map[string][]groups.ContextDoc),
+					}
+				}
 
 				// Parse the doc
 				doc, err := groups.ParseContextDoc(m.rootPath, selectedPath)
@@ -649,24 +786,29 @@ func (m Model) updateAddDoc(msg tea.Msg) (tea.Model, tea.Cmd) {
 					insertStructureTag(m.rootPath, selectedPath)
 				}
 
-				// Initialize registry if needed
-				if m.docRegistry == nil {
-					m.docRegistry = &groups.ContextDocRegistry{
-						Categories: groups.DefaultCategories(),
-						Docs:       []groups.ContextDoc{},
-						ByCategory: make(map[string][]groups.ContextDoc),
-					}
-				}
-
 				// Add to registry
 				m.docRegistry.Docs = append(m.docRegistry.Docs, *doc)
 
 				// Update ByCategory map
 				catID := strings.ToLower(strings.ReplaceAll(doc.Category, " ", "-"))
 				if catID == "" {
-					catID = "miscellaneous"
+					catID = "uncategorized"
 				}
 				m.docRegistry.ByCategory[catID] = append(m.docRegistry.ByCategory[catID], *doc)
+
+				// If adding to uncategorized, ensure category exists in list
+				if catID == "uncategorized" {
+					hasUncategorized := false
+					for _, cat := range m.docRegistry.Categories {
+						if cat.ID == "uncategorized" {
+							hasUncategorized = true
+							break
+						}
+					}
+					if !hasUncategorized {
+						m.docRegistry.Categories = append([]groups.Category{{ID: "uncategorized", Name: "Uncategorized"}}, m.docRegistry.Categories...)
+					}
+				}
 
 				// Save registry
 				if err := groups.SaveContextDocRegistry(m.rootPath, m.docRegistry); err != nil {
@@ -676,15 +818,15 @@ func (m Model) updateAddDoc(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.statusMessage = fmt.Sprintf("Added %s!", doc.Name)
 				}
+
+				// Clear selections
+				m.selectedAddFiles = make(map[string]bool)
 				m.statusMessageTime = time.Now()
 				m.addingDoc = false
 				return m, ClearStatusAfter(5 * time.Second)
 			}
 			return m, nil
-		}
-
-	case tea.MouseMsg:
-		if msg.Button == tea.MouseButtonWheelUp {
+		} else if msg.Button == tea.MouseButtonWheelUp {
 			m.addDocScroll--
 			if m.addDocScroll < 0 {
 				m.addDocScroll = 0
@@ -717,6 +859,95 @@ func (m *Model) ensureAddDocVisible() {
 	} else if m.addDocCursor >= m.addDocScroll+maxHeight {
 		m.addDocScroll = m.addDocCursor - maxHeight + 1
 	}
+}
+
+// findClickedAddDocFile finds which file was clicked in the add doc overlay
+func (m Model) findClickedAddDocFile(clickX, clickY int) int {
+	totalFiles := len(m.availableMdFiles)
+	if totalFiles == 0 {
+		return -1
+	}
+
+	// Box dimensions (must match view.go renderAddDocOverlay)
+	boxWidth := 70 + 6 // width + padding*2 + border*2
+
+	// Calculate box position (centered)
+	boxLeft := (m.width - boxWidth) / 2
+	boxRight := boxLeft + boxWidth
+
+	// Check X bounds
+	if clickX < boxLeft || clickX > boxRight {
+		return -1
+	}
+
+	// Calculate visible content (must match view.go logic)
+	totalLines := 4 + totalFiles // 4 header lines + file lines
+	maxHeight := m.height - 12
+	if maxHeight < 5 {
+		maxHeight = 5
+	}
+
+	scrollOffset := m.addDocScroll
+	maxScroll := totalLines - maxHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	endIdx := scrollOffset + maxHeight
+	if endIdx > totalLines {
+		endIdx = totalLines
+	}
+	visibleLines := endIdx - scrollOffset
+
+	// Calculate actual content height
+	// Content: more_above? + visible lines + more_below? + newline + footer
+	contentLines := visibleLines + 2 // +2 for blank line and footer
+	hasMoreAbove := scrollOffset > 0
+	hasMoreBelow := endIdx < totalLines
+	if hasMoreAbove {
+		contentLines++
+	}
+	if hasMoreBelow {
+		contentLines++
+	}
+
+	// Box height = content + border(2) + padding(2)
+	boxHeight := contentLines + 4
+	boxTop := (m.height - boxHeight) / 2
+
+	// Click position in content area (after border + top padding)
+	contentY := clickY - boxTop - 2
+
+	if contentY < 0 {
+		return -1
+	}
+
+	// Account for "more above" indicator
+	if hasMoreAbove {
+		if contentY == 0 {
+			return -1 // clicked on "more above"
+		}
+		contentY-- // adjust for more_above indicator
+	}
+
+	// contentY is now position in the visible lines array portion
+	// lines[scrollOffset + contentY] is the clicked line
+	lineIdx := scrollOffset + contentY
+
+	// Header is lines 0-3, files start at line 4
+	fileIdx := lineIdx - 4
+
+	if fileIdx < 0 || fileIdx >= totalFiles {
+		return -1
+	}
+
+	return fileIdx
 }
 
 // getDocsForSelectedCategory returns docs for the currently selected category

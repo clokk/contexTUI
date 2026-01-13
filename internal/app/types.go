@@ -59,6 +59,7 @@ type Model struct {
 	availableMdFiles   []string                   // .md files available to add
 	addDocCursor       int                        // Cursor in add doc picker
 	addDocScroll       int                        // Scroll offset in add doc picker
+	selectedAddFiles   map[string]bool            // Selected files for multi-add
 
 	// File watcher
 	watcher *fsnotify.Watcher

@@ -90,7 +90,8 @@ func NewModel(rootPath string) Model {
 		watcher:      watcher,
 		// Context docs
 		docRegistry:  docRegistry,
-		selectedDocs: make(map[string]bool),
+		selectedDocs:     make(map[string]bool),
+		selectedAddFiles: make(map[string]bool),
 		// Git integration
 		isGitRepo:      isGit,
 		gitRepoRoot:    gitRoot,

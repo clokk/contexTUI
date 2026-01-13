@@ -45,7 +45,6 @@ func DefaultCategories() []Category {
 	return []Category{
 		{ID: "meta", Name: "Meta"},
 		{ID: "feature", Name: "Feature"},
-		{ID: "miscellaneous", Name: "Miscellaneous"},
 	}
 }
 
@@ -296,7 +295,7 @@ func LoadContextDocRegistry(rootPath string) (*ContextDocRegistry, error) {
 				// Track order per category (from file order, preserves reordering)
 				catID := strings.ToLower(strings.ReplaceAll(doc.Category, " ", "-"))
 				if catID == "" {
-					catID = "miscellaneous"
+					catID = "uncategorized"
 				}
 				categoryDocOrder[catID] = append(categoryDocOrder[catID], *doc)
 			}
@@ -334,6 +333,12 @@ func LoadContextDocRegistry(rootPath string) (*ContextDocRegistry, error) {
 
 	// Use the file order for ByCategory (preserves user's reordering)
 	registry.ByCategory = categoryDocOrder
+
+	// Add dynamic "Uncategorized" category if there are uncategorized docs
+	if len(categoryDocOrder["uncategorized"]) > 0 {
+		// Prepend to categories so it appears first
+		registry.Categories = append([]Category{{ID: "uncategorized", Name: "Uncategorized"}}, registry.Categories...)
+	}
 
 	return registry, nil
 }

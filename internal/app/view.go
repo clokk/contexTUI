@@ -301,9 +301,16 @@ func (m Model) renderAddDocOverlay(background string) string {
 	lines = append(lines, "")
 
 	for i, file := range m.availableMdFiles {
-		isSelected := i == m.addDocCursor
-		line := "  " + file
-		if isSelected {
+		isCursor := i == m.addDocCursor
+
+		// Selection indicator (checkmark for selected files)
+		selectionPrefix := "  "
+		if m.selectedAddFiles[file] {
+			selectionPrefix = lipgloss.NewStyle().Foreground(styles.SuccessBold).Render("✓ ")
+		}
+
+		line := selectionPrefix + file
+		if isCursor {
 			lines = append(lines, selectedStyle.Render(line))
 		} else {
 			lines = append(lines, normalStyle.Render(line))
@@ -351,7 +358,12 @@ func (m Model) renderAddDocOverlay(background string) string {
 	}
 
 	content.WriteString("\n")
-	content.WriteString(metaStyle.Render("[j/k] navigate  [enter] add  [esc] cancel"))
+	// Show selection count if any files selected
+	if len(m.selectedAddFiles) > 0 {
+		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+		content.WriteString(statusStyle.Render(fmt.Sprintf("%d selected  ", len(m.selectedAddFiles))))
+	}
+	content.WriteString(metaStyle.Render("[j/k] navigate  [space] select  [enter] add  [esc] cancel"))
 
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
