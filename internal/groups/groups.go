@@ -242,6 +242,8 @@ func LoadContextDocRegistry(rootPath string) (*ContextDocRegistry, error) {
 
 	scanner := bufio.NewScanner(file)
 	inActiveDocs := false
+	// Track per-category doc order from file structure
+	categoryDocOrder := make(map[string][]ContextDoc)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -251,8 +253,13 @@ func LoadContextDocRegistry(rootPath string) (*ContextDocRegistry, error) {
 			inActiveDocs = true
 			continue
 		}
-		if strings.HasPrefix(line, "## ") {
+		if strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "### ") {
 			inActiveDocs = false
+			continue
+		}
+
+		// Skip category headers (### CategoryName) - we use doc's own category metadata
+		if inActiveDocs && strings.HasPrefix(line, "### ") {
 			continue
 		}
 
@@ -285,6 +292,13 @@ func LoadContextDocRegistry(rootPath string) (*ContextDocRegistry, error) {
 					doc.CheckStaleness(rootPath)
 				}
 				registry.Docs = append(registry.Docs, *doc)
+
+				// Track order per category (from file order, preserves reordering)
+				catID := strings.ToLower(strings.ReplaceAll(doc.Category, " ", "-"))
+				if catID == "" {
+					catID = "miscellaneous"
+				}
+				categoryDocOrder[catID] = append(categoryDocOrder[catID], *doc)
 			}
 		}
 	}
@@ -318,14 +332,8 @@ func LoadContextDocRegistry(rootPath string) (*ContextDocRegistry, error) {
 		})
 	}
 
-	// Organize by category
-	for _, d := range registry.Docs {
-		catID := strings.ToLower(strings.ReplaceAll(d.Category, " ", "-"))
-		if catID == "" {
-			catID = "miscellaneous"
-		}
-		registry.ByCategory[catID] = append(registry.ByCategory[catID], d)
-	}
+	// Use the file order for ByCategory (preserves user's reordering)
+	registry.ByCategory = categoryDocOrder
 
 	return registry, nil
 }
@@ -524,16 +532,21 @@ func SaveContextDocRegistry(rootPath string, registry *ContextDocRegistry) error
 	sb.WriteString("\n")
 
 	sb.WriteString("## Active Docs\n\n")
-	for _, d := range registry.Docs {
-		status := d.Status
-		if status == "" {
-			status = "?"
+	// Write docs grouped by category to preserve per-category ordering
+	for _, cat := range registry.Categories {
+		catDocs := registry.ByCategory[cat.ID]
+		if len(catDocs) == 0 {
+			continue
 		}
-		category := d.Category
-		if category == "" {
-			category = "?"
+		sb.WriteString("### " + cat.Name + "\n\n")
+		for _, d := range catDocs {
+			status := d.Status
+			if status == "" {
+				status = "?"
+			}
+			sb.WriteString("- " + d.FilePath + " (" + d.Category + ", " + status + ")\n")
 		}
-		sb.WriteString("- " + d.FilePath + " (" + category + ", " + status + ")\n")
+		sb.WriteString("\n")
 	}
 
 	registryPath := filepath.Join(rootPath, ".context-docs.md")

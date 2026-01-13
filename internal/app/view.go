@@ -395,15 +395,16 @@ func (m Model) renderContextDocsOverlay(background string) string {
 		Padding(0, 1).
 		Width(cardWidth)
 
-	var lines []string
+	// === STICKY HEADER (not scrolled) ===
+	var headerLines []string
 
 	// Title with copy feedback
 	titleLine := titleStyle.Render("Context Docs")
 	if m.statusMessage != "" && strings.HasPrefix(m.statusMessage, "Copied:") {
 		titleLine += "  " + copiedStyle.Render(m.statusMessage)
 	}
-	lines = append(lines, titleLine)
-	lines = append(lines, "")
+	headerLines = append(headerLines, titleLine)
+	headerLines = append(headerLines, "")
 
 	// Category gallery navigation - show prev | current | next
 	if m.docRegistry != nil && len(m.docRegistry.Categories) > 0 {
@@ -441,30 +442,33 @@ func (m Model) renderContextDocsOverlay(background string) string {
 
 		// Center the navigation bar
 		centeredNav := lipgloss.NewStyle().Width(cardWidth).Align(lipgloss.Center).Render(navLine)
-		lines = append(lines, centeredNav)
-		lines = append(lines, "")
-		lines = append(lines, separatorStyle.Render("────────────────────────────────────────────────────────────────"))
-		lines = append(lines, "")
+		headerLines = append(headerLines, centeredNav)
+		headerLines = append(headerLines, "")
+		headerLines = append(headerLines, separatorStyle.Render("────────────────────────────────────────────────────────────────"))
+		headerLines = append(headerLines, "")
 	}
+
+	// === SCROLLABLE CONTENT (cards only) ===
+	var cardLines []string
 
 	// Get docs for selected category
 	docs := m.getDocsForSelectedCategory()
 
 	if m.docRegistry == nil || len(m.docRegistry.Docs) == 0 {
-		lines = append(lines, metaStyle.Render("No context docs defined yet."))
-		lines = append(lines, "")
-		lines = append(lines, metaStyle.Render("Press 'a' to add a markdown file as a context doc."))
+		cardLines = append(cardLines, metaStyle.Render("No context docs defined yet."))
+		cardLines = append(cardLines, "")
+		cardLines = append(cardLines, metaStyle.Render("Press 'a' to add a markdown file as a context doc."))
 	} else if len(docs) == 0 {
-		lines = append(lines, metaStyle.Render("No docs in this category."))
-		lines = append(lines, "")
-		lines = append(lines, metaStyle.Render("Use h/l to switch categories, or 'a' to add a doc."))
+		cardLines = append(cardLines, metaStyle.Render("No docs in this category."))
+		cardLines = append(cardLines, "")
+		cardLines = append(cardLines, metaStyle.Render("Use h/l to switch categories, or 'a' to add a doc."))
 	} else {
 		// Render each doc as a card
 		for docIdx, doc := range docs {
 			isSelected := docIdx == m.docCursor
 
 			// Build card content
-			var cardLines []string
+			var cardContent []string
 
 			// Selection indicator
 			selectionPrefix := "  "
@@ -473,7 +477,7 @@ func (m Model) renderContextDocsOverlay(background string) string {
 			}
 
 			// Title line with status indicators
-			titleLine := selectionPrefix + lipgloss.NewStyle().Bold(true).Render(doc.Name)
+			cardTitleLine := selectionPrefix + lipgloss.NewStyle().Bold(true).Render(doc.Name)
 
 			// Status badge
 			statusBadge := ""
@@ -506,17 +510,17 @@ func (m Model) renderContextDocsOverlay(background string) string {
 				indicators = append(indicators, staleStyle.Render(" ○ stale"))
 			}
 
-			cardLines = append(cardLines, titleLine+statusBadge+strings.Join(indicators, ""))
+			cardContent = append(cardContent, cardTitleLine+statusBadge+strings.Join(indicators, ""))
 
 			// Filepath - show below title for clarity
-			cardLines = append(cardLines, metaStyle.Render(doc.FilePath))
+			cardContent = append(cardContent, metaStyle.Render(doc.FilePath))
 
 			// Description - word wrap to card width
 			if doc.Description != "" {
 				desc := doc.Description
 				wrapped := wrapText(desc, cardWidth-4)
 				for _, line := range wrapped {
-					cardLines = append(cardLines, descStyle.Render(line))
+					cardContent = append(cardContent, descStyle.Render(line))
 				}
 			}
 
@@ -529,35 +533,38 @@ func (m Model) renderContextDocsOverlay(background string) string {
 				metaParts = append(metaParts, fmt.Sprintf("~%d tokens", doc.TokenEstimate))
 			}
 			if len(metaParts) > 0 {
-				cardLines = append(cardLines, metaStyle.Render(strings.Join(metaParts, " · ")))
+				cardContent = append(cardContent, metaStyle.Render(strings.Join(metaParts, " · ")))
 			}
 
 			// Render the card
-			cardContent := strings.Join(cardLines, "\n")
+			cardContentStr := strings.Join(cardContent, "\n")
 			var renderedCard string
 			if isSelected {
-				renderedCard = selectedCardStyle.Render(cardContent)
+				renderedCard = selectedCardStyle.Render(cardContentStr)
 			} else {
-				renderedCard = normalCardStyle.Render(cardContent)
+				renderedCard = normalCardStyle.Render(cardContentStr)
 			}
 
 			// Add card lines
 			for _, line := range strings.Split(renderedCard, "\n") {
-				lines = append(lines, line)
+				cardLines = append(cardLines, line)
 			}
 		}
 	}
 
-	// Calculate scrolling
-	maxContentHeight := m.height - 8
-	if maxContentHeight < 10 {
-		maxContentHeight = 10
+	// === CALCULATE SCROLLING (cards only) ===
+	headerHeight := len(headerLines)
+	footerHeight := 3 // scroll indicator + footer line + padding
+
+	maxContentHeight := m.height - 8 - headerHeight - footerHeight
+	if maxContentHeight < 5 {
+		maxContentHeight = 5
 	}
 
-	totalLines := len(lines)
+	totalCardLines := len(cardLines)
 	scrollOffset := m.docsScrollOffset
 
-	maxScroll := totalLines - maxContentHeight
+	maxScroll := totalCardLines - maxContentHeight
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -568,30 +575,41 @@ func (m Model) renderContextDocsOverlay(background string) string {
 		scrollOffset = 0
 	}
 
-	// Build visible content
+	// === BUILD FINAL CONTENT ===
 	var content strings.Builder
-	endIdx := scrollOffset + maxContentHeight
-	if endIdx > totalLines {
-		endIdx = totalLines
+
+	// 1. Sticky header (always visible)
+	for _, line := range headerLines {
+		content.WriteString(line)
+		content.WriteString("\n")
 	}
 
+	// 2. Scroll indicator (above)
 	if scrollOffset > 0 {
 		content.WriteString(separatorStyle.Render("  ▲ more above"))
 		content.WriteString("\n")
 	}
 
+	// 3. Visible cards (scrolled portion)
+	endIdx := scrollOffset + maxContentHeight
+	if endIdx > totalCardLines {
+		endIdx = totalCardLines
+	}
+
 	for i := scrollOffset; i < endIdx; i++ {
-		content.WriteString(lines[i])
+		content.WriteString(cardLines[i])
 		content.WriteString("\n")
 	}
 
-	if endIdx < totalLines {
+	// 4. Scroll indicator (below)
+	if endIdx < totalCardLines {
 		content.WriteString(separatorStyle.Render("  ▼ more below"))
 	}
 
 	content.WriteString("\n")
-	// Footer with status message or selection count
-	footerText := "[h/l] category  [j/k] nav  [space] select  [c] copy  [a] add  [d] remove  [p] prompt  [esc] close"
+
+	// 5. Footer with status message or selection count
+	footerText := "[h/l] cat  [j/k] nav  [J/K] reorder  [space] select  [c] copy  [a] add  [d] rm  [esc] close"
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
 	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 5*time.Second {
 		// Show status message (copy feedback, etc.)

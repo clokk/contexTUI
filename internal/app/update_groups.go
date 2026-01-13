@@ -95,6 +95,34 @@ func (m Model) updateDocs(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "K", "shift+up":
+			// Move doc up in category
+			if m.docCursor > 0 {
+				m.moveDocInCategory(m.docCursor, m.docCursor-1)
+				m.docCursor--
+				m.ensureDocVisible()
+				// Save registry to persist order
+				if err := groups.SaveContextDocRegistry(m.rootPath, m.docRegistry); err == nil {
+					m.statusMessage = "Moved doc up"
+					m.statusMessageTime = time.Now()
+				}
+			}
+			return m, nil
+
+		case "J", "shift+down":
+			// Move doc down in category
+			if m.docCursor < totalDocs-1 {
+				m.moveDocInCategory(m.docCursor, m.docCursor+1)
+				m.docCursor++
+				m.ensureDocVisible()
+				// Save registry to persist order
+				if err := groups.SaveContextDocRegistry(m.rootPath, m.docRegistry); err == nil {
+					m.statusMessage = "Moved doc down"
+					m.statusMessageTime = time.Now()
+				}
+			}
+			return m, nil
+
 		case "enter", "c":
 			// Copy selected docs (or current if none selected) as @filepath references
 			if len(m.selectedDocs) > 0 {
@@ -286,20 +314,20 @@ func (m Model) updateDocs(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, ClearStatusAfter(5 * time.Second)
 			}
 		} else if msg.Button == tea.MouseButtonWheelUp {
-			m.docsScrollOffset--
+			m.docsScrollOffset -= 3 // Scroll 3 lines at a time for smoother scrolling
 			if m.docsScrollOffset < 0 {
 				m.docsScrollOffset = 0
 			}
 			return m, nil
 		} else if msg.Button == tea.MouseButtonWheelDown {
-			m.docsScrollOffset++
-			// Estimate max scroll based on card layout (~7 lines per card + headers)
-			maxContentHeight := m.height - 8
-			if maxContentHeight < 10 {
-				maxContentHeight = 10
+			m.docsScrollOffset += 3 // Scroll 3 lines at a time for smoother scrolling
+			// Calculate max scroll based on card layout (consistent with view.go)
+			maxContentHeight := m.height - 19 // Same as ensureDocVisible
+			if maxContentHeight < 5 {
+				maxContentHeight = 5
 			}
-			estimatedLines := m.estimateDocsLineCount()
-			maxScroll := estimatedLines - maxContentHeight
+			totalLines := m.estimateDocsLineCount()
+			maxScroll := totalLines - maxContentHeight
 			if maxScroll < 0 {
 				maxScroll = 0
 			}
@@ -318,14 +346,26 @@ func (m *Model) ensureDocVisible() {
 		return
 	}
 
-	maxContentHeight := m.height - 16
-	if maxContentHeight < 8 {
-		maxContentHeight = 8
+	docs := m.getDocsForSelectedCategory()
+	if len(docs) == 0 || m.docCursor < 0 || m.docCursor >= len(docs) {
+		return
 	}
 
+	// Calculate visible content height (must match view.go calculation)
+	// Box overhead: 8, header: ~6, footer: ~3, scroll indicators: ~2
+	maxContentHeight := m.height - 19
+	if maxContentHeight < 5 {
+		maxContentHeight = 5
+	}
+
+	// Get the line range for the selected card
 	lineIdx := m.getDocLineIndex(m.docCursor)
+	cardHeight := m.getCardHeight(docs[m.docCursor])
+	cardEndLine := lineIdx + cardHeight
+
 	totalLines := m.getDocTotalLines()
 
+	// Clamp scroll offset to valid range
 	maxScroll := totalLines - maxContentHeight
 	if maxScroll < 0 {
 		maxScroll = 0
@@ -337,40 +377,59 @@ func (m *Model) ensureDocVisible() {
 		m.docsScrollOffset = 0
 	}
 
+	// Ensure the entire card is visible
 	if lineIdx < m.docsScrollOffset {
+		// Card starts above viewport - scroll up to show it
 		m.docsScrollOffset = lineIdx
-	} else if lineIdx >= m.docsScrollOffset+maxContentHeight {
-		m.docsScrollOffset = lineIdx - maxContentHeight + 1
+	} else if cardEndLine > m.docsScrollOffset+maxContentHeight {
+		// Card ends below viewport - scroll down to show it
+		m.docsScrollOffset = cardEndLine - maxContentHeight
+		if m.docsScrollOffset < 0 {
+			m.docsScrollOffset = 0
+		}
 	}
 }
 
-// getDocLineIndex returns the line index for a given doc index
+// getDocLineIndex returns the line index for a given doc index within the current category
 func (m Model) getDocLineIndex(docIdx int) int {
-	if m.docRegistry == nil {
+	docs := m.getDocsForSelectedCategory()
+	if len(docs) == 0 || docIdx < 0 || docIdx >= len(docs) {
 		return 0
 	}
 
-	lineIdx := 1 // Title line
+	// Cards start after header (which is now sticky/not scrolled)
+	// So line 0 is the first card
+	lineIdx := 0
 
-	currentDocIdx := 0
-	for _, cat := range m.docRegistry.Categories {
-		catDocs := m.docRegistry.ByCategory[cat.ID]
-		if len(catDocs) == 0 {
-			continue
-		}
-
-		lineIdx += 2 // separator + category name
-
-		for range catDocs {
-			if currentDocIdx == docIdx {
-				return lineIdx
-			}
-			lineIdx++
-			currentDocIdx++
-		}
+	// Calculate cumulative card heights up to the target doc
+	for i := 0; i < docIdx; i++ {
+		lineIdx += m.getCardHeight(docs[i])
 	}
 
 	return lineIdx
+}
+
+// getCardHeight returns the rendered height of a doc card in lines
+func (m Model) getCardHeight(doc groups.ContextDoc) int {
+	// Card structure: border top (1) + title (1) + filepath (1) + desc (1-3) + meta (0-1) + border bottom (1)
+	cardLines := 4 // borders (2) + title (1) + filepath (1)
+
+	if doc.Description != "" {
+		// Estimate wrapped description lines (max 3)
+		descLen := len(doc.Description)
+		descLines := (descLen / 60) + 1
+		if descLines > 3 {
+			descLines = 3
+		}
+		cardLines += descLines
+	}
+
+	// Meta line (key files + token estimate)
+	if len(doc.KeyFiles) > 0 || doc.TokenEstimate > 0 {
+		cardLines++
+	}
+
+	return cardLines
 }
 
 // getDocTotalLines returns total lines in the docs overlay
@@ -378,29 +437,17 @@ func (m Model) getDocTotalLines() int {
 	return m.estimateDocsLineCount()
 }
 
-// estimateDocsLineCount estimates actual rendered line count for card layout
+// estimateDocsLineCount estimates total scrollable content height (cards only, header is sticky)
 func (m Model) estimateDocsLineCount() int {
 	docs := m.getDocsForSelectedCategory()
 
 	if len(docs) == 0 {
-		return 10 // Title + tabs + empty message
+		return 3 // Empty message takes a few lines
 	}
 
-	lineCount := 6 // Title + blank + tabs + separator + blank
-
-	// Each card: ~8 lines (border top/bottom + title + filepath + 3 desc + key files)
+	lineCount := 0
 	for _, doc := range docs {
-		cardLines := 5 // borders (2) + title (1) + filepath (1) + key files (1)
-		if doc.Description != "" {
-			// Estimate wrapped description lines (max 3)
-			descLen := len(doc.Description)
-			descLines := (descLen / 60) + 1
-			if descLines > 3 {
-				descLines = 3
-			}
-			cardLines += descLines
-		}
-		lineCount += cardLines
+		lineCount += m.getCardHeight(doc)
 	}
 
 	return lineCount
@@ -751,4 +798,51 @@ func stripContextDocMetadata(rootPath, filePath string) error {
 	}
 
 	return os.WriteFile(fullPath, []byte(strings.Join(newLines, "\n")), 0644)
+}
+
+// moveDocInCategory swaps two docs within the current category
+func (m *Model) moveDocInCategory(fromIdx, toIdx int) {
+	if m.docRegistry == nil || len(m.docRegistry.Categories) == 0 {
+		return
+	}
+
+	// Get current category
+	catIdx := m.selectedCategory
+	if catIdx < 0 || catIdx >= len(m.docRegistry.Categories) {
+		return
+	}
+	cat := m.docRegistry.Categories[catIdx]
+	docs := m.docRegistry.ByCategory[cat.ID]
+
+	// Bounds check
+	if fromIdx < 0 || fromIdx >= len(docs) || toIdx < 0 || toIdx >= len(docs) {
+		return
+	}
+
+	// Get the file paths before swapping
+	fromPath := docs[fromIdx].FilePath
+	toPath := docs[toIdx].FilePath
+
+	// Swap in ByCategory
+	docs[fromIdx], docs[toIdx] = docs[toIdx], docs[fromIdx]
+	m.docRegistry.ByCategory[cat.ID] = docs
+
+	// Also swap in the master Docs slice so it persists when saved
+	var fromGlobalIdx, toGlobalIdx int = -1, -1
+	for i, d := range m.docRegistry.Docs {
+		if d.FilePath == fromPath {
+			fromGlobalIdx = i
+		}
+		if d.FilePath == toPath {
+			toGlobalIdx = i
+		}
+		if fromGlobalIdx >= 0 && toGlobalIdx >= 0 {
+			break
+		}
+	}
+
+	if fromGlobalIdx >= 0 && toGlobalIdx >= 0 {
+		m.docRegistry.Docs[fromGlobalIdx], m.docRegistry.Docs[toGlobalIdx] =
+			m.docRegistry.Docs[toGlobalIdx], m.docRegistry.Docs[fromGlobalIdx]
+	}
 }
