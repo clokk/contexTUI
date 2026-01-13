@@ -7,3 +7,6 @@ contexTUI
 # IDE
 .idea/
 .vscode/
+
+# User config
+.contexTUI.json

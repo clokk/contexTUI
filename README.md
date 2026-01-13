@@ -100,6 +100,14 @@ NO_COLOR=1 contexTUI  # Disable colors
 
 Respects the [NO_COLOR](https://no-color.org/) standard.
 
+## Configuration
+
+contexTUI stores user preferences (like split pane ratio) in `.contexTUI.json`. This file is user-specific and should be added to your project's `.gitignore`:
+
+```bash
+echo ".contexTUI.json" >> .gitignore
+```
+
 ## License
 
 MIT
