@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/connorleisz/contexTUI/internal/clipboard"
+	"github.com/connorleisz/contexTUI/internal/groups"
 )
 
 // StructureNeededTag is inserted into files that need context group structuring
@@ -27,7 +29,7 @@ then update the file to include:
 Remove the <!-- contexTUI: structure-needed --> tag after structuring.`
 
 // updateGroups handles the context groups overlay
-func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle add group mode separately
 	if m.addingGroup {
 		return m.updateAddGroup(msg)
@@ -91,7 +93,7 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 					refs = append(refs, "@"+path)
 				}
 				combined := strings.Join(refs, "\n")
-				if err := copyRawToClipboard(combined); err != nil {
+				if err := clipboard.CopyRaw(combined); err != nil {
 					m.statusMessage = "Clipboard unavailable"
 				} else {
 					m.statusMessage = fmt.Sprintf("Copied %d references", len(refs))
@@ -99,23 +101,23 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Clear selections after copy
 				m.selectedGroups = make(map[string]bool)
 				m.statusMessageTime = time.Now()
-				return m, clearStatusAfter(5 * time.Second)
+				return m, ClearStatusAfter(5 * time.Second)
 			} else if m.docGroupCursor < totalGroups {
 				// Copy single current group as @filepath reference
 				group := currentGroups[m.docGroupCursor]
-				if err := copyToClipboard(group.FilePath); err != nil {
+				if err := clipboard.CopyFilePath(group.FilePath); err != nil {
 					m.statusMessage = "Clipboard unavailable"
 				} else {
 					m.statusMessage = fmt.Sprintf("Copied: @%s", group.FilePath)
 				}
 				m.statusMessageTime = time.Now()
-				return m, clearStatusAfter(5 * time.Second)
+				return m, ClearStatusAfter(5 * time.Second)
 			}
 			return m, nil
 
 		case "a":
 			// Find available .md files to add
-			mdFiles, _ := FindMarkdownFiles(m.rootPath)
+			mdFiles, _ := groups.FindMarkdownFiles(m.rootPath)
 			// Filter out already-added files
 			var available []string
 			existingPaths := make(map[string]bool)
@@ -132,7 +134,7 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(available) == 0 {
 				m.statusMessage = "No markdown files available to add"
 				m.statusMessageTime = time.Now()
-				return m, clearStatusAfter(5 * time.Second)
+				return m, ClearStatusAfter(5 * time.Second)
 			}
 			m.availableMdFiles = available
 			m.addGroupCursor = 0
@@ -142,13 +144,13 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "p":
 			// Copy the structuring prompt to clipboard
-			if err := copyToClipboard(StructuringPrompt); err != nil {
+			if err := clipboard.CopyFilePath(StructuringPrompt); err != nil {
 				m.statusMessage = "Clipboard unavailable"
 			} else {
 				m.statusMessage = "Copied structuring prompt!"
 			}
 			m.statusMessageTime = time.Now()
-			return m, clearStatusAfter(5 * time.Second)
+			return m, ClearStatusAfter(5 * time.Second)
 
 		case "d", "x":
 			// Remove the selected group from registry
@@ -168,10 +170,10 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if sgID == "" {
 					sgID = "miscellaneous"
 				}
-				groups := m.docRegistry.BySuper[sgID]
-				for i, g := range groups {
+				docGroups := m.docRegistry.BySuper[sgID]
+				for i, g := range docGroups {
 					if g.FilePath == group.FilePath {
-						m.docRegistry.BySuper[sgID] = append(groups[:i], groups[i+1:]...)
+						m.docRegistry.BySuper[sgID] = append(docGroups[:i], docGroups[i+1:]...)
 						break
 					}
 				}
@@ -188,13 +190,13 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 				stripContextGroupMetadata(m.rootPath, group.FilePath)
 
 				// Save registry
-				if err := SaveDocGroupRegistry(m.rootPath, m.docRegistry); err != nil {
+				if err := groups.SaveDocGroupRegistry(m.rootPath, m.docRegistry); err != nil {
 					m.statusMessage = fmt.Sprintf("Error: %v", err)
 				} else {
 					m.statusMessage = fmt.Sprintf("Removed %s", group.Name)
 				}
 				m.statusMessageTime = time.Now()
-				return m, clearStatusAfter(5 * time.Second)
+				return m, ClearStatusAfter(5 * time.Second)
 			}
 			return m, nil
 
@@ -210,7 +212,7 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMessage = fmt.Sprintf("Selected (%d total)", len(m.selectedGroups))
 				}
 				m.statusMessageTime = time.Now()
-				return m, clearStatusAfter(2 * time.Second)
+				return m, ClearStatusAfter(2 * time.Second)
 			}
 			return m, nil
 
@@ -254,7 +256,7 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 						refs = append(refs, "@"+path)
 					}
 					combined := strings.Join(refs, "\n")
-					if err := copyRawToClipboard(combined); err != nil {
+					if err := clipboard.CopyRaw(combined); err != nil {
 						m.statusMessage = "Clipboard unavailable"
 					} else {
 						m.statusMessage = fmt.Sprintf("Copied %d references", len(refs))
@@ -263,14 +265,14 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					// Copy the clicked group as @filepath reference
 					group := currentGroups[clickedIdx]
-					if err := copyToClipboard(group.FilePath); err != nil {
+					if err := clipboard.CopyFilePath(group.FilePath); err != nil {
 						m.statusMessage = "Clipboard unavailable"
 					} else {
 						m.statusMessage = fmt.Sprintf("Copied: @%s", group.FilePath)
 					}
 				}
 				m.statusMessageTime = time.Now()
-				return m, clearStatusAfter(5 * time.Second)
+				return m, ClearStatusAfter(5 * time.Second)
 			}
 		} else if msg.Button == tea.MouseButtonWheelUp {
 			m.groupsScrollOffset--
@@ -300,7 +302,7 @@ func (m model) updateGroups(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // ensureDocGroupVisible ensures the selected doc group is visible
-func (m *model) ensureDocGroupVisible() {
+func (m *Model) ensureDocGroupVisible() {
 	if m.docRegistry == nil {
 		return
 	}
@@ -332,7 +334,7 @@ func (m *model) ensureDocGroupVisible() {
 }
 
 // getDocGroupLineIndex returns the line index for a given group index
-func (m model) getDocGroupLineIndex(groupIdx int) int {
+func (m Model) getDocGroupLineIndex(groupIdx int) int {
 	if m.docRegistry == nil {
 		return 0
 	}
@@ -341,14 +343,14 @@ func (m model) getDocGroupLineIndex(groupIdx int) int {
 
 	currentGroupIdx := 0
 	for _, sg := range m.docRegistry.Supergroups {
-		groups := m.docRegistry.BySuper[sg.ID]
-		if len(groups) == 0 {
+		sgGroups := m.docRegistry.BySuper[sg.ID]
+		if len(sgGroups) == 0 {
 			continue
 		}
 
 		lineIdx += 2 // separator + supergroup name
 
-		for range groups {
+		for range sgGroups {
 			if currentGroupIdx == groupIdx {
 				return lineIdx
 			}
@@ -361,22 +363,22 @@ func (m model) getDocGroupLineIndex(groupIdx int) int {
 }
 
 // getDocGroupTotalLines returns total lines in the doc groups overlay
-func (m model) getDocGroupTotalLines() int {
+func (m Model) getDocGroupTotalLines() int {
 	return m.estimateGroupsLineCount()
 }
 
 // estimateGroupsLineCount estimates actual rendered line count for card layout
-func (m model) estimateGroupsLineCount() int {
-	groups := m.getGroupsForSelectedSupergroup()
+func (m Model) estimateGroupsLineCount() int {
+	docGroups := m.getGroupsForSelectedSupergroup()
 
-	if len(groups) == 0 {
+	if len(docGroups) == 0 {
 		return 10 // Title + tabs + empty message
 	}
 
 	lineCount := 6 // Title + blank + tabs + separator + blank
 
 	// Each card: ~8 lines (border top/bottom + title + filepath + 3 desc + key files)
-	for _, group := range groups {
+	for _, group := range docGroups {
 		cardLines := 5 // borders (2) + title (1) + filepath (1) + key files (1)
 		if group.Description != "" {
 			// Estimate wrapped description lines (max 3)
@@ -402,7 +404,7 @@ const (
 
 // findClickedNav detects clicks on the gallery navigation bar
 // Returns: navClickPrev (-2) for left third, navClickNext (-3) for right third, navClickNone (-1) otherwise
-func (m model) findClickedNav(clickX, clickY int) int {
+func (m Model) findClickedNav(clickX, clickY int) int {
 	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
 		return navClickNone
 	}
@@ -448,9 +450,9 @@ func (m model) findClickedNav(clickX, clickY int) int {
 }
 
 // findClickedGroup returns the index of the group at the click position, or -1
-func (m model) findClickedGroup(clickX, clickY int) int {
-	groups := m.getGroupsForSelectedSupergroup()
-	if len(groups) == 0 {
+func (m Model) findClickedGroup(clickX, clickY int) int {
+	docGroups := m.getGroupsForSelectedSupergroup()
+	if len(docGroups) == 0 {
 		return -1
 	}
 
@@ -478,9 +480,9 @@ func (m model) findClickedGroup(clickX, clickY int) int {
 	headerLines := 6
 
 	// Calculate card line ranges (start line index for each card in the lines array)
-	cardStarts := make([]int, len(groups))
+	cardStarts := make([]int, len(docGroups))
 	currentLine := headerLines
-	for i, group := range groups {
+	for i, group := range docGroups {
 		cardStarts[i] = currentLine
 		// Card height: border(2) + title(1) + filepath(1) + description(0-3) + keyfiles(1)
 		cardHeight := 5 // border top/bottom + title + filepath + key files
@@ -532,7 +534,7 @@ func (m model) findClickedGroup(clickX, clickY int) int {
 	clickedLineIdx := scrollOffset + contentY
 
 	// Find which card contains this line
-	for i := len(groups) - 1; i >= 0; i-- {
+	for i := len(docGroups) - 1; i >= 0; i-- {
 		if clickedLineIdx >= cardStarts[i] {
 			return i
 		}
@@ -542,7 +544,7 @@ func (m model) findClickedGroup(clickX, clickY int) int {
 }
 
 // updateAddGroup handles the add group picker
-func (m model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	totalFiles := len(m.availableMdFiles)
 
 	switch msg := msg.(type) {
@@ -572,12 +574,12 @@ func (m model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 				selectedPath := m.availableMdFiles[m.addGroupCursor]
 
 				// Parse the doc
-				group, err := ParseDocContextGroup(m.rootPath, selectedPath)
+				group, err := groups.ParseDocContextGroup(m.rootPath, selectedPath)
 				if err != nil {
 					m.statusMessage = fmt.Sprintf("Error: %v", err)
 					m.statusMessageTime = time.Now()
 					m.addingGroup = false
-					return m, clearStatusAfter(5 * time.Second)
+					return m, ClearStatusAfter(5 * time.Second)
 				}
 
 				// Validate and check staleness
@@ -591,10 +593,10 @@ func (m model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				// Initialize registry if needed
 				if m.docRegistry == nil {
-					m.docRegistry = &DocGroupRegistry{
-						Supergroups: DefaultSupergroups(),
-						Groups:      []DocContextGroup{},
-						BySuper:     make(map[string][]DocContextGroup),
+					m.docRegistry = &groups.DocGroupRegistry{
+						Supergroups: groups.DefaultSupergroups(),
+						Groups:      []groups.DocContextGroup{},
+						BySuper:     make(map[string][]groups.DocContextGroup),
 					}
 				}
 
@@ -609,7 +611,7 @@ func (m model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.docRegistry.BySuper[sgID] = append(m.docRegistry.BySuper[sgID], *group)
 
 				// Save registry
-				if err := SaveDocGroupRegistry(m.rootPath, m.docRegistry); err != nil {
+				if err := groups.SaveDocGroupRegistry(m.rootPath, m.docRegistry); err != nil {
 					m.statusMessage = fmt.Sprintf("Error saving: %v", err)
 				} else if len(group.MissingFields) > 0 {
 					m.statusMessage = "Added (incomplete)! Press 'p' for structuring prompt"
@@ -618,7 +620,7 @@ func (m model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.statusMessageTime = time.Now()
 				m.addingGroup = false
-				return m, clearStatusAfter(5 * time.Second)
+				return m, ClearStatusAfter(5 * time.Second)
 			}
 			return m, nil
 		}
@@ -646,7 +648,7 @@ func (m model) updateAddGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // ensureAddGroupVisible keeps the cursor visible in add group picker
-func (m *model) ensureAddGroupVisible() {
+func (m *Model) ensureAddGroupVisible() {
 	maxHeight := m.height - 12
 	if maxHeight < 5 {
 		maxHeight = 5
@@ -660,7 +662,7 @@ func (m *model) ensureAddGroupVisible() {
 }
 
 // getGroupsForSelectedSupergroup returns groups for the currently selected supergroup
-func (m model) getGroupsForSelectedSupergroup() []DocContextGroup {
+func (m Model) getGroupsForSelectedSupergroup() []groups.DocContextGroup {
 	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
 		return nil
 	}
@@ -679,7 +681,7 @@ func (m model) getGroupsForSelectedSupergroup() []DocContextGroup {
 }
 
 // getSelectedSupergroupName returns the name of the currently selected supergroup
-func (m model) getSelectedSupergroupName() string {
+func (m Model) getSelectedSupergroupName() string {
 	if m.docRegistry == nil || len(m.docRegistry.Supergroups) == 0 {
 		return ""
 	}
@@ -715,7 +717,6 @@ func insertStructureTag(rootPath, filePath string) error {
 }
 
 // stripContextGroupMetadata removes contexTUI-specific metadata from a markdown file
-// This is called when removing a group so it won't be auto-detected as complete if re-added
 func stripContextGroupMetadata(rootPath, filePath string) error {
 	fullPath := filepath.Join(rootPath, filePath)
 	content, err := os.ReadFile(fullPath)
@@ -740,4 +741,3 @@ func stripContextGroupMetadata(rootPath, filePath string) error {
 
 	return os.WriteFile(fullPath, []byte(strings.Join(newLines, "\n")), 0644)
 }
-

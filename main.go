@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/connorleisz/contexTUI/internal/app"
 	"github.com/muesli/termenv"
 )
 
@@ -22,7 +23,7 @@ func main() {
 	}
 
 	p := tea.NewProgram(
-		initialModel(rootPath),
+		app.NewModel(rootPath),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"encoding/json"
@@ -6,11 +6,16 @@ import (
 	"path/filepath"
 )
 
-const configFileName = ".contexTUI.json"
+const FileName = ".contexTUI.json"
 
-// loadConfig loads project-specific configuration
-func loadConfig(rootPath string) Config {
-	configPath := filepath.Join(rootPath, configFileName)
+// Config represents user preferences saved per-project
+type Config struct {
+	SplitRatio float64 `json:"splitRatio,omitempty"`
+}
+
+// Load loads project-specific configuration
+func Load(rootPath string) Config {
+	configPath := filepath.Join(rootPath, FileName)
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -25,9 +30,9 @@ func loadConfig(rootPath string) Config {
 	return cfg
 }
 
-// saveConfig saves project-specific configuration
-func saveConfig(rootPath string, cfg Config) {
-	configPath := filepath.Join(rootPath, configFileName)
+// Save saves project-specific configuration
+func Save(rootPath string, cfg Config) {
+	configPath := filepath.Join(rootPath, FileName)
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

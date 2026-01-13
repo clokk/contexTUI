@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -7,41 +7,39 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/connorleisz/contexTUI/internal/git"
+	"github.com/connorleisz/contexTUI/internal/ui/styles"
 )
 
-func (m model) View() string {
+// View implements tea.Model
+func (m Model) View() string {
 	if !m.ready {
 		return "Initializing..."
 	}
 
 	// Header
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("205")).
-		Padding(0, 1)
+	headerStyle := styles.Header.Copy().Padding(0, 1)
 
 	header := headerStyle.Render("contexTUI") +
-		lipgloss.NewStyle().Faint(true).Render(" " + m.rootPath)
+		styles.Faint.Render(" " + m.rootPath)
 
 	paneHeight := m.height - 4 // header(1) + footer(1) + borders(2)
-	footerStyle := lipgloss.NewStyle().Faint(true)
+	footerStyle := styles.Faint
 
 	var body, footer string
 
 	// In copy mode, show only the preview pane at full width with selection highlighting
 	if m.selectMode {
 		fullWidth := m.width - 4 // borders
-		previewStyle := lipgloss.NewStyle().
+		previewStyle := styles.ActiveBorder().
 			Width(fullWidth).
 			Height(paneHeight).
-			Padding(0, 1).
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("205"))
+			Padding(0, 1)
 
 		// Render preview with selection highlighting
 		body = previewStyle.Render(m.renderPreviewWithSelection(fullWidth-2, paneHeight))
 
-		selectStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+		selectStyle := styles.Header
 		if m.selectStart >= 0 && m.selectEnd >= 0 {
 			start, end := m.selectStart, m.selectEnd
 			if start > end {
@@ -56,40 +54,36 @@ func (m model) View() string {
 	} else if m.gitStatusMode {
 		// Git status view - show changed files list and preview
 		body = m.renderGitStatusView(paneHeight)
-		gitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("118")).Bold(true)
+		gitStyle := styles.StatusSuccess
 		footer = m.renderBranchStatus() + gitStyle.Render("GIT") + footerStyle.Render("  / search  f fetch  esc close  ? help")
 	} else {
 		// Normal mode - show both panes
-		leftWidth := m.leftPaneWidth()
-		rightWidth := m.rightPaneWidth()
+		leftWidth := m.LeftPaneWidth()
+		rightWidth := m.RightPaneWidth()
 
-		treeStyle := lipgloss.NewStyle().
+		var treeStyle lipgloss.Style
+		if m.activePane == TreePane {
+			treeStyle = styles.ActiveBorder()
+		} else {
+			treeStyle = styles.InactiveBorder()
+		}
+		treeStyle = treeStyle.
 			Width(leftWidth).
 			Height(paneHeight).
 			Padding(0, 1)
 
-		if m.activePane == treePane {
-			treeStyle = treeStyle.BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("205"))
-		} else {
-			treeStyle = treeStyle.BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("240"))
-		}
-
 		tree := treeStyle.Render(m.tree.View())
 
-		previewStyle := lipgloss.NewStyle().
+		var previewStyle lipgloss.Style
+		if m.activePane == PreviewPane {
+			previewStyle = styles.ActiveBorder()
+		} else {
+			previewStyle = styles.InactiveBorder()
+		}
+		previewStyle = previewStyle.
 			Width(rightWidth).
 			Height(paneHeight).
 			Padding(0, 1)
-
-		if m.activePane == previewPane {
-			previewStyle = previewStyle.BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("205"))
-		} else {
-			previewStyle = previewStyle.BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("240"))
-		}
 
 		preview := previewStyle.Render(m.preview.View())
 
@@ -99,8 +93,7 @@ func (m model) View() string {
 
 	// Prepend status message to footer if present and recent
 	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 5*time.Second {
-		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("118")).Bold(true)
-		footer = statusStyle.Render(m.statusMessage) + "  " + footer
+		footer = styles.StatusSuccess.Render(m.statusMessage) + "  " + footer
 	}
 
 	mainView := header + "\n" + body + "\n" + footer
@@ -124,7 +117,7 @@ func (m model) View() string {
 }
 
 // renderPreviewWithSelection renders the preview content with selection highlighting
-func (m model) renderPreviewWithSelection(width, height int) string {
+func (m Model) renderPreviewWithSelection(width, height int) string {
 	if len(m.previewLines) == 0 {
 		return "Select a file to preview"
 	}
@@ -132,9 +125,7 @@ func (m model) renderPreviewWithSelection(width, height int) string {
 	var b strings.Builder
 
 	// Highlight style - strip existing colors and apply solid background
-	highlightStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("205")).
-		Foreground(lipgloss.Color("0"))
+	highlightStyle := styles.Highlight
 
 	// Determine selection range
 	selStart, selEnd := -1, -1
@@ -195,33 +186,28 @@ func stripAnsi(s string) string {
 	return result.String()
 }
 
-func (m model) renderSearchOverlay(background string) string {
+func (m Model) renderSearchOverlay(background string) string {
 	// Build search box content
 	var content strings.Builder
 	content.WriteString(m.searchInput.View())
 	content.WriteString("\n\n")
 
 	if len(m.searchResults) == 0 && m.searchInput.Value() != "" {
-		content.WriteString(lipgloss.NewStyle().Faint(true).Render("No matches"))
+		content.WriteString(styles.Faint.Render("No matches"))
 	} else {
 		for i, result := range m.searchResults {
-			line := result.displayName
+			line := result.DisplayName
 			if i == m.searchCursor {
-				line = lipgloss.NewStyle().
-					Background(lipgloss.Color("205")).
-					Foreground(lipgloss.Color("0")).
-					Render(line)
+				line = styles.Selected.Render(line)
 			} else {
-				line = lipgloss.NewStyle().Faint(true).Render(line)
+				line = styles.Faint.Render(line)
 			}
 			content.WriteString(line + "\n")
 		}
 	}
 
 	// Style the search box
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("205")).
+	boxStyle := styles.ActiveBorder().
 		Padding(1, 2).
 		Width(50)
 
@@ -237,40 +223,33 @@ func (m model) renderSearchOverlay(background string) string {
 	return centeredBox
 }
 
-func (m model) renderTree() string {
+// RenderTree renders the tree pane content
+func (m Model) RenderTree() string {
 	var b strings.Builder
-	flat := m.flatEntries()
+	flat := m.FlatEntries()
 
 	// Git status styles
-	gitStyles := map[string]lipgloss.Style{
-		"M": lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true), // Yellow - modified
-		"A": lipgloss.NewStyle().Foreground(lipgloss.Color("118")).Bold(true), // Green - added
-		"D": lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true), // Red - deleted
-		"R": lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true),  // Blue - renamed
-		"?": lipgloss.NewStyle().Foreground(lipgloss.Color("244")),            // Gray - untracked
-		"U": lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true), // Red - conflict
-		"!": lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true), // Red - conflict
-	}
-	dirIndicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	gitStyles := styles.GitStatusStyles()
+	dirIndicatorStyle := lipgloss.NewStyle().Foreground(styles.TextFaint)
 
 	for i, e := range flat {
-		indent := strings.Repeat("  ", e.depth)
+		indent := strings.Repeat("  ", e.Depth)
 
 		icon := "  "
-		if e.isDir {
-			if e.expanded {
+		if e.IsDir {
+			if e.Expanded {
 				icon = "v "
 			} else {
 				icon = "> "
 			}
 		}
 
-		line := indent + icon + e.name
-		relPath, _ := filepath.Rel(m.rootPath, e.path)
+		line := indent + icon + e.Name
+		relPath, _ := filepath.Rel(m.rootPath, e.Path)
 
 		// Add git status badge
 		if m.isGitRepo {
-			if e.isDir {
+			if e.IsDir {
 				// Directory indicator - show dot if contains changes
 				if _, ok := m.gitDirStatus[relPath]; ok {
 					line += " " + dirIndicatorStyle.Render("●")
@@ -286,13 +265,9 @@ func (m model) renderTree() string {
 		}
 
 		if i == m.cursor {
-			style := lipgloss.NewStyle().
-				Background(lipgloss.Color("205")).
-				Foreground(lipgloss.Color("0"))
-			line = style.Render(line)
-		} else if e.isDir {
-			style := lipgloss.NewStyle().Bold(true)
-			line = style.Render(line)
+			line = styles.Selected.Render(line)
+		} else if e.IsDir {
+			line = lipgloss.NewStyle().Bold(true).Render(line)
 		}
 
 		b.WriteString(line + "\n")
@@ -301,7 +276,7 @@ func (m model) renderTree() string {
 	return b.String()
 }
 
-func (m model) renderGroupsOverlay(background string) string {
+func (m Model) renderGroupsOverlay(background string) string {
 	// Use add group picker if in that mode
 	if m.addingGroup {
 		return m.renderAddGroupOverlay(background)
@@ -312,12 +287,12 @@ func (m model) renderGroupsOverlay(background string) string {
 }
 
 // renderAddGroupOverlay renders the add group file picker
-func (m model) renderAddGroupOverlay(background string) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	selectedStyle := lipgloss.NewStyle().Background(lipgloss.Color("205")).Foreground(lipgloss.Color("0"))
-	normalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	metaStyle := lipgloss.NewStyle().Faint(true)
-	separatorStyle := lipgloss.NewStyle().Faint(true)
+func (m Model) renderAddGroupOverlay(background string) string {
+	titleStyle := styles.Title
+	selectedStyle := styles.Selected
+	normalStyle := styles.Normal
+	metaStyle := styles.Faint
+	separatorStyle := styles.Faint
 
 	var lines []string
 	lines = append(lines, titleStyle.Render("Add Context Group"))
@@ -395,23 +370,23 @@ func (m model) renderAddGroupOverlay(background string) string {
 }
 
 // renderDocGroupsOverlay renders the v2 documentation-first context groups as cards
-func (m model) renderDocGroupsOverlay(background string) string {
+func (m Model) renderDocGroupsOverlay(background string) string {
 	// Card width for description wrapping
 	cardWidth := 68
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	separatorStyle := lipgloss.NewStyle().Faint(true)
-	warningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-	metaStyle := lipgloss.NewStyle().Faint(true)
-	copiedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("82"))
+	titleStyle := styles.Title
+	separatorStyle := styles.Faint
+	warningStyle := styles.StatusWarning
+	errorStyle := styles.StatusError
+	staleStyle := lipgloss.NewStyle().Foreground(styles.TextFaint)
+	descStyle := styles.Muted
+	metaStyle := styles.Faint
+	copiedStyle := lipgloss.NewStyle().Bold(true).Foreground(styles.SuccessBold)
 
 	// Card styles
 	selectedCardStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("205")).
+		BorderForeground(styles.BorderActive).
 		Padding(0, 1).
 		Width(cardWidth)
 
@@ -452,9 +427,9 @@ func (m model) renderDocGroupsOverlay(background string) string {
 		currCount := len(m.docRegistry.BySuper[currSg.ID])
 
 		// Styles
-		fadedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-		activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-		arrowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+		fadedStyle := lipgloss.NewStyle().Foreground(styles.BorderInactive)
+		activeStyle := styles.Header
+		arrowStyle := lipgloss.NewStyle().Foreground(styles.TextFaint)
 
 		// Build gallery: ◀ PrevName  |  CurrentName (count)  |  NextName ▶
 		prevText := fadedStyle.Render(fmt.Sprintf("◀ %s", prevSg.Name))
@@ -494,7 +469,7 @@ func (m model) renderDocGroupsOverlay(background string) string {
 			// Selection indicator
 			selectionPrefix := "  "
 			if m.selectedGroups[group.FilePath] {
-				selectionPrefix = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Render("✓ ")
+				selectionPrefix = lipgloss.NewStyle().Foreground(styles.SuccessBold).Render("✓ ")
 			}
 
 			// Title line with status indicators
@@ -683,13 +658,13 @@ func wrapText(text string, width int) []string {
 }
 
 // renderBranchStatus returns the git branch name with ahead/behind indicators
-func (m model) renderBranchStatus() string {
+func (m Model) renderBranchStatus() string {
 	if !m.isGitRepo || m.gitBranch == "" {
 		return ""
 	}
 
-	branchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
-	indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	branchStyle := styles.Branch
+	indicatorStyle := lipgloss.NewStyle().Foreground(styles.TextFaint)
 
 	var status string
 	if m.gitFetching {
@@ -712,11 +687,11 @@ func (m model) renderBranchStatus() string {
 }
 
 // renderHelpOverlay renders the help overlay with all keybindings
-func (m model) renderHelpOverlay(background string) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
-	descStyle := lipgloss.NewStyle().Faint(true)
+func (m Model) renderHelpOverlay(background string) string {
+	titleStyle := styles.Title
+	sectionStyle := styles.SectionHeader
+	keyStyle := styles.Key
+	descStyle := styles.Faint
 
 	var content strings.Builder
 
@@ -772,4 +747,140 @@ func (m model) renderHelpOverlay(background string) string {
 		lipgloss.Center, lipgloss.Center,
 		helpBox,
 	)
+}
+
+// renderGitStatusView renders the git status view with file list and preview
+func (m Model) renderGitStatusView(paneHeight int) string {
+	leftWidth := m.LeftPaneWidth()
+	rightWidth := m.RightPaneWidth()
+
+	// Left pane: Changed files list
+	var left strings.Builder
+
+	left.WriteString(styles.Header.Render("Git Status"))
+	left.WriteString("\n\n")
+
+	if len(m.gitChanges) == 0 {
+		left.WriteString(styles.Faint.Render("Working tree clean"))
+	} else {
+		// Group by status
+		var staged, unstaged, untracked []git.FileStatus
+
+		for _, c := range m.gitChanges {
+			if c.Status == "?" {
+				untracked = append(untracked, c)
+			} else if c.Staged {
+				staged = append(staged, c)
+			} else {
+				unstaged = append(unstaged, c)
+			}
+		}
+
+		// Style definitions
+		stagedStyle := lipgloss.NewStyle().Foreground(styles.GitAdded).Bold(true)
+		unstagedStyle := lipgloss.NewStyle().Foreground(styles.GitModified).Bold(true)
+		untrackedStyle := lipgloss.NewStyle().Foreground(styles.GitUntracked)
+		selectedStyle := styles.Selected
+
+		statusStyles := styles.GitStatusStyles()
+
+		idx := 0
+
+		// Render staged changes
+		if len(staged) > 0 {
+			left.WriteString(stagedStyle.Render("Staged Changes"))
+			left.WriteString("\n")
+			for _, c := range staged {
+				var line string
+				if idx == m.gitStatusCursor {
+					// For selected line, don't apply status color - use uniform highlight
+					line = fmt.Sprintf("  %s %s", c.Status, c.Path)
+					// Pad line for full highlight
+					if len(line) < leftWidth-4 {
+						line = line + strings.Repeat(" ", leftWidth-4-len(line))
+					}
+					line = selectedStyle.Render(line)
+				} else {
+					statusStyle := statusStyles[c.Status]
+					line = fmt.Sprintf("  %s %s", statusStyle.Render(c.Status), c.Path)
+				}
+				left.WriteString(line + "\n")
+				idx++
+			}
+			left.WriteString("\n")
+		}
+
+		// Render unstaged changes
+		if len(unstaged) > 0 {
+			left.WriteString(unstagedStyle.Render("Changes not staged"))
+			left.WriteString("\n")
+			for _, c := range unstaged {
+				var line string
+				if idx == m.gitStatusCursor {
+					// For selected line, don't apply status color - use uniform highlight
+					line = fmt.Sprintf("  %s %s", c.Status, c.Path)
+					if len(line) < leftWidth-4 {
+						line = line + strings.Repeat(" ", leftWidth-4-len(line))
+					}
+					line = selectedStyle.Render(line)
+				} else {
+					statusStyle := statusStyles[c.Status]
+					line = fmt.Sprintf("  %s %s", statusStyle.Render(c.Status), c.Path)
+				}
+				left.WriteString(line + "\n")
+				idx++
+			}
+			left.WriteString("\n")
+		}
+
+		// Render untracked files
+		if len(untracked) > 0 {
+			left.WriteString(untrackedStyle.Render("Untracked files"))
+			left.WriteString("\n")
+			for _, c := range untracked {
+				var line string
+				if idx == m.gitStatusCursor {
+					// For selected line, don't apply status color - use uniform highlight
+					line = fmt.Sprintf("  %s %s", c.Status, c.Path)
+					if len(line) < leftWidth-4 {
+						line = line + strings.Repeat(" ", leftWidth-4-len(line))
+					}
+					line = selectedStyle.Render(line)
+				} else {
+					line = fmt.Sprintf("  %s %s", untrackedStyle.Render(c.Status), c.Path)
+				}
+				left.WriteString(line + "\n")
+				idx++
+			}
+		}
+	}
+
+	// Style the left pane
+	var leftPaneStyle lipgloss.Style
+	if m.activePane == TreePane {
+		leftPaneStyle = styles.ActiveBorder()
+	} else {
+		leftPaneStyle = styles.InactiveBorder()
+	}
+	leftPaneStyle = leftPaneStyle.
+		Width(leftWidth).
+		Height(paneHeight).
+		Padding(0, 1)
+
+	// Right pane: File preview
+	var previewStyle lipgloss.Style
+	if m.activePane == PreviewPane {
+		previewStyle = styles.ActiveBorder()
+	} else {
+		previewStyle = styles.InactiveBorder()
+	}
+	previewStyle = previewStyle.
+		Width(rightWidth).
+		Height(paneHeight).
+		Padding(0, 1)
+
+	leftPane := leftPaneStyle.Render(left.String())
+	rightPane := previewStyle.Render(m.preview.View())
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 }

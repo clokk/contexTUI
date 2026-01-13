@@ -1,4 +1,4 @@
-package main
+package groups
 
 import (
 	"bufio"
@@ -51,8 +51,8 @@ func DefaultSupergroups() []Supergroup {
 
 // DocGroupRegistry holds the v2 context groups system state
 type DocGroupRegistry struct {
-	Supergroups []Supergroup              // Available supergroups (defaults + custom)
-	Groups      []DocContextGroup         // All registered doc groups
+	Supergroups []Supergroup                 // Available supergroups (defaults + custom)
+	Groups      []DocContextGroup            // All registered doc groups
 	BySuper     map[string][]DocContextGroup // Groups organized by supergroup ID
 }
 

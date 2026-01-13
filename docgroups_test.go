@@ -1,11 +1,13 @@
-package main
+package main_test
 
 import (
 	"testing"
+
+	"github.com/connorleisz/contexTUI/internal/groups"
 )
 
 func TestLoadDocGroupRegistry(t *testing.T) {
-	registry, err := LoadDocGroupRegistry(".")
+	registry, err := groups.LoadDocGroupRegistry(".")
 	if err != nil {
 		t.Fatalf("Failed to load registry: %v", err)
 	}
@@ -35,7 +37,7 @@ func TestLoadDocGroupRegistry(t *testing.T) {
 
 func TestParseDocContextGroup(t *testing.T) {
 	// Test parsing our vision doc
-	group, err := ParseDocContextGroup(".", "docs/context-groups-v2.md")
+	group, err := groups.ParseDocContextGroup(".", "docs/context-groups-v2.md")
 	if err != nil {
 		t.Fatalf("Failed to parse doc: %v", err)
 	}
