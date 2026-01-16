@@ -7,11 +7,12 @@ import (
 
 // ToggleExpand expands or collapses a directory entry
 func (m Model) ToggleExpand(path string) Model {
-	m.entries = toggleExpandRecursive(m.entries, path, m.showDotfiles)
+	m.entries = toggleExpandRecursive(m.entries, path, m.rootPath, m.showDotfiles)
+	m.InvalidateTreeCache()
 	return m
 }
 
-func toggleExpandRecursive(entries []Entry, path string, showDotfiles bool) []Entry {
+func toggleExpandRecursive(entries []Entry, path, rootPath string, showDotfiles bool) []Entry {
 	for i, e := range entries {
 		if e.Path == path && e.IsDir {
 			if e.Expanded {
@@ -19,12 +20,12 @@ func toggleExpandRecursive(entries []Entry, path string, showDotfiles bool) []En
 				entries[i].Children = nil
 			} else {
 				entries[i].Expanded = true
-				entries[i].Children = LoadDirectory(path, e.Depth+1, showDotfiles)
+				entries[i].Children = LoadDirectoryWithRoot(path, rootPath, e.Depth+1, showDotfiles)
 			}
 			return entries
 		}
 		if e.Expanded && len(e.Children) > 0 {
-			entries[i].Children = toggleExpandRecursive(e.Children, path, showDotfiles)
+			entries[i].Children = toggleExpandRecursive(e.Children, path, rootPath, showDotfiles)
 		}
 	}
 	return entries
@@ -33,6 +34,7 @@ func toggleExpandRecursive(entries []Entry, path string, showDotfiles bool) []En
 // Collapse collapses a directory entry
 func (m Model) Collapse(path string) Model {
 	m.entries = collapseRecursive(m.entries, path)
+	m.InvalidateTreeCache()
 	return m
 }
 
@@ -58,8 +60,11 @@ func (m Model) NavigateToFile(relPath string) Model {
 	// Expand each directory in the path
 	for i := 0; i < len(parts)-1; i++ {
 		currentPath = filepath.Join(currentPath, parts[i])
-		m.entries = expandPath(m.entries, currentPath, m.showDotfiles)
+		m.entries = expandPath(m.entries, currentPath, m.rootPath, m.showDotfiles)
 	}
+
+	// Invalidate cache since we may have expanded directories
+	m.InvalidateTreeCache()
 
 	// Find the file in the flat list and set cursor
 	fullPath := filepath.Join(m.rootPath, relPath)
@@ -74,15 +79,15 @@ func (m Model) NavigateToFile(relPath string) Model {
 	return m
 }
 
-func expandPath(entries []Entry, path string, showDotfiles bool) []Entry {
+func expandPath(entries []Entry, path, rootPath string, showDotfiles bool) []Entry {
 	for i, e := range entries {
 		if e.Path == path && e.IsDir && !e.Expanded {
 			entries[i].Expanded = true
-			entries[i].Children = LoadDirectory(path, e.Depth+1, showDotfiles)
+			entries[i].Children = LoadDirectoryWithRoot(path, rootPath, e.Depth+1, showDotfiles)
 			return entries
 		}
 		if e.Expanded && len(e.Children) > 0 {
-			entries[i].Children = expandPath(e.Children, path, showDotfiles)
+			entries[i].Children = expandPath(e.Children, path, rootPath, showDotfiles)
 		}
 	}
 	return entries

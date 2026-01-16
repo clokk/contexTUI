@@ -36,19 +36,22 @@ type Model struct {
 	ready          bool
 	lastClickTime  time.Time
 	lastClickIndex int
+	treeCache      TreeCache // Cached tree data for rendering optimization
 
 	// Pane resizing
 	splitRatio    float64 // 0.2 to 0.8, left pane width ratio
 	draggingSplit bool    // True when dragging the divider
 
 	// Fuzzy finder
-	searching          bool
-	searchInput        textinput.Model
-	searchResults      []SearchResult
-	searchCursor       int
-	searchScrollOffset int      // Scroll offset for search results viewport
-	lastSearchQuery    string   // Previous query to detect changes
-	allFiles           []string // Flat list of all file paths for searching
+	searching            bool
+	searchInput          textinput.Model
+	searchResults        []SearchResult
+	searchCursor         int
+	searchScrollOffset   int      // Scroll offset for search results viewport
+	lastSearchQuery      string   // Previous query to detect changes
+	pendingSearchQuery   string   // Query waiting for debounce
+	searchDebounceActive bool     // Whether a debounce timer is pending
+	allFiles             []string // Flat list of all file paths for searching
 
 	// Context docs (documentation-first)
 	docRegistry        *groups.ContextDocRegistry // Doc-based context docs
@@ -141,6 +144,9 @@ type SearchResult struct {
 	DisplayName  string
 	MatchedIndex int // Index into allFiles
 }
+
+// SearchDebounceMsg is sent after debounce delay to trigger fuzzy search
+type SearchDebounceMsg struct{}
 
 // FileLoadedMsg is sent when file content is loaded
 type FileLoadedMsg struct {
@@ -289,4 +295,11 @@ type Entry struct {
 	Depth    int
 	Expanded bool
 	Children []Entry
+	RelPath  string // Cached relative path from root
+}
+
+// TreeCache stores pre-computed tree data to avoid recomputation on every render
+type TreeCache struct {
+	flatEntries []Entry // Cached flattened entries
+	valid       bool    // Whether cache is valid
 }

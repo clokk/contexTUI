@@ -14,6 +14,31 @@ import (
 	"github.com/sahilm/fuzzy"
 )
 
+// clearAllOverlays resets all overlay states to prevent conflicting modes
+// This should be called before entering any new overlay mode
+func (m *Model) clearAllOverlays() {
+	m.showingHelp = false
+	m.helpScrollOffset = 0
+	m.searching = false
+	m.searchInput.Blur()
+	m.searchScrollOffset = 0
+	m.lastSearchQuery = ""
+	m.showingDocs = false
+	m.addingDoc = false
+	m.docCursor = 0
+	m.docsScrollOffset = 0
+	m.selectMode = false
+	m.selectStart = -1
+	m.selectEnd = -1
+	m.isSelecting = false
+	m.gitStatusMode = false
+	m.fileOpMode = FileOpNone
+	m.fileOpInput.Blur()
+	m.fileOpError = ""
+	m.fileOpConfirm = false
+	m.fileOpScrollOffset = 0
+}
+
 // Update implements tea.Model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -47,6 +72,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle async directory load completion
 	if msg, ok := msg.(DirectoryLoadedMsg); ok {
 		m.entries = msg.Entries
+		m.InvalidateTreeCache()
 		if m.ready {
 			m.tree.SetContent(m.RenderTree())
 		}
@@ -81,6 +107,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tree.SetContent(m.RenderTree())
 		}
 		m.checkLoadingComplete()
+		// If in git status mode, update the file list and load first preview
+		if m.gitStatusMode {
+			m.gitList.SetContent(m.renderGitFileList())
+			if len(m.gitChanges) > 0 {
+				var cmd tea.Cmd
+				m, cmd = m.UpdateGitStatusPreview()
+				return m, cmd
+			}
+		}
 		return m, nil
 	}
 
@@ -458,28 +493,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			// Create new file
 			if m.activePane == TreePane {
+				m.clearAllOverlays()
 				m.fileOpMode = FileOpCreateFile
 				m.fileOpInput.SetValue("")
 				m.fileOpInput.Placeholder = "filename"
 				m.fileOpInput.Focus()
 				m.fileOpTargetPath = m.getTargetDirectory()
-				m.fileOpError = ""
-				m.fileOpConfirm = false
-				m.fileOpScrollOffset = 0
 				return m, textinput.Blink
 			}
 
 		case "N":
 			// Create new folder
 			if m.activePane == TreePane {
+				m.clearAllOverlays()
 				m.fileOpMode = FileOpCreateFolder
 				m.fileOpInput.SetValue("")
 				m.fileOpInput.Placeholder = "folder name"
 				m.fileOpInput.Focus()
 				m.fileOpTargetPath = m.getTargetDirectory()
-				m.fileOpError = ""
-				m.fileOpConfirm = false
-				m.fileOpScrollOffset = 0
 				return m, textinput.Blink
 			}
 
@@ -489,6 +520,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				flat := m.FlatEntries()
 				if m.cursor < len(flat) {
 					e := flat[m.cursor]
+					m.clearAllOverlays()
 					m.fileOpMode = FileOpRename
 					m.fileOpInput.SetValue(e.Name)
 					m.fileOpInput.Placeholder = "new name"
@@ -496,9 +528,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Select all text for easy replacement
 					m.fileOpInput.CursorEnd()
 					m.fileOpTargetPath = e.Path
-					m.fileOpError = ""
-					m.fileOpConfirm = false
-					m.fileOpScrollOffset = 0
 					return m, textinput.Blink
 				}
 			}
@@ -509,17 +538,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				flat := m.FlatEntries()
 				if m.cursor < len(flat) {
 					e := flat[m.cursor]
+					m.clearAllOverlays()
 					m.fileOpMode = FileOpDelete
 					m.fileOpTargetPath = e.Path
-					m.fileOpError = ""
-					m.fileOpConfirm = false
-					m.fileOpScrollOffset = 0
 					return m, nil
 				}
 			}
 
 		case "/":
 			// Enter search mode
+			m.clearAllOverlays()
 			m.searching = true
 			m.searchInput.Focus()
 			m.searchInput.SetValue("")
@@ -529,6 +557,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "g":
 			// Show docs panel
+			m.clearAllOverlays()
 			m.showingDocs = true
 			m.docCursor = 0
 			m.docsScrollOffset = 0
@@ -537,6 +566,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "v":
 			// Toggle copy mode
 			if !m.selectMode {
+				m.clearAllOverlays()
 				m.selectMode = true
 				m.selectStart = -1
 				m.selectEnd = -1
@@ -550,20 +580,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle git status view
 			if m.isGitRepo {
 				if !m.gitStatusMode {
+					m.clearAllOverlays()
 					m.gitStatusMode = true
 					m.gitStatusCursor = 0
-					// Refresh git status when entering
-					m.gitStatus, m.gitChanges = git.LoadStatus(m.gitRepoRoot)
-					m.gitDirStatus = git.ComputeDirStatus(m.gitStatus)
-					// Initialize viewport content and reset scroll
-					m.gitList.SetContent(m.renderGitFileList())
+					// Initialize viewport and trigger async git status refresh
 					m.gitList.GotoTop()
-					// Load preview for first item if there are changes
-					if len(m.gitChanges) > 0 {
-						var cmd tea.Cmd
-						m, cmd = m.UpdateGitStatusPreview()
-						return m, cmd
-					}
+					m.loadingMessage = "Loading git status..."
+					m.pendingLoads = 1
+					return m, tea.Batch(m.loadGitStatusAsync(), SpinnerTick())
 				} else {
 					m.gitStatusMode = false
 				}
@@ -712,19 +736,12 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update the text input
-	var cmd tea.Cmd
-	m.searchInput, cmd = m.searchInput.Update(msg)
-	cmds = append(cmds, cmd)
-
-	// Update search results only when query changes
-	query := m.searchInput.Value()
-	if query != m.lastSearchQuery {
-		m.lastSearchQuery = query
-		if query == "" {
-			m.searchResults = nil
-			m.searchScrollOffset = 0
-		} else {
+	// Handle debounced search message - perform search with current pending query
+	if _, ok := msg.(SearchDebounceMsg); ok {
+		m.searchDebounceActive = false
+		query := m.pendingSearchQuery
+		// Only perform search if we have a pending query and it differs from last search
+		if query != "" && query != m.lastSearchQuery {
 			matches := fuzzy.Find(query, m.allFiles)
 			m.searchResults = make([]SearchResult, 0, len(matches))
 			for _, match := range matches {
@@ -733,10 +750,37 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 					DisplayName: m.allFiles[match.Index],
 				})
 			}
-			// Reset cursor and scroll when query changes
-			m.searchCursor = 0
-			m.searchScrollOffset = 0
+			m.lastSearchQuery = query
 		}
+		return m, nil
+	}
+
+	// Update the text input
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	cmds = append(cmds, cmd)
+
+	// Schedule debounced search when query changes
+	query := m.searchInput.Value()
+	if query != m.pendingSearchQuery {
+		m.pendingSearchQuery = query
+		// Reset cursor and scroll immediately for responsiveness
+		m.searchCursor = 0
+		m.searchScrollOffset = 0
+
+		if query == "" {
+			// Immediate clear for empty query
+			m.searchResults = nil
+			m.lastSearchQuery = ""
+			m.searchDebounceActive = false
+		} else if !m.searchDebounceActive {
+			// Schedule debounced search (100ms delay) - only one timer at a time
+			m.searchDebounceActive = true
+			cmds = append(cmds, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+				return SearchDebounceMsg{}
+			}))
+		}
+		// If debounce is already active, the pending query will be used when it fires
 	}
 
 	return m, tea.Batch(cmds...)

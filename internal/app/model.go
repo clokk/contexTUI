@@ -149,7 +149,13 @@ func CollectAllFiles(root string, showDotfiles bool) []string {
 }
 
 // LoadDirectory loads directory entries at the specified depth
+// rootPath is used to compute relative paths for caching
 func LoadDirectory(path string, depth int, showDotfiles bool) []Entry {
+	return LoadDirectoryWithRoot(path, path, depth, showDotfiles)
+}
+
+// LoadDirectoryWithRoot loads directory entries with root path for relative path computation
+func LoadDirectoryWithRoot(path, rootPath string, depth int, showDotfiles bool) []Entry {
 	var entries []Entry
 
 	files, err := os.ReadDir(path)
@@ -178,11 +184,14 @@ func LoadDirectory(path string, depth int, showDotfiles bool) []Entry {
 			continue
 		}
 
+		fullPath := filepath.Join(path, name)
+		relPath, _ := filepath.Rel(rootPath, fullPath)
 		e := Entry{
-			Name:  name,
-			Path:  filepath.Join(path, name),
-			IsDir: f.IsDir(),
-			Depth: depth,
+			Name:    name,
+			Path:    fullPath,
+			IsDir:   f.IsDir(),
+			Depth:   depth,
+			RelPath: relPath,
 		}
 		entries = append(entries, e)
 	}
@@ -233,8 +242,26 @@ func (m Model) waitForFsEvent() tea.Cmd {
 }
 
 // FlatEntries returns a flat list of all visible entries
+// Uses cache when available for performance
 func (m Model) FlatEntries() []Entry {
+	if m.treeCache.valid && m.treeCache.flatEntries != nil {
+		return m.treeCache.flatEntries
+	}
 	return flattenEntries(m.entries)
+}
+
+// FlatEntriesCached returns cached flat entries, rebuilding cache if needed
+func (m *Model) FlatEntriesCached() []Entry {
+	if !m.treeCache.valid || m.treeCache.flatEntries == nil {
+		m.treeCache.flatEntries = flattenEntries(m.entries)
+		m.treeCache.valid = true
+	}
+	return m.treeCache.flatEntries
+}
+
+// InvalidateTreeCache marks the tree cache as stale
+func (m *Model) InvalidateTreeCache() {
+	m.treeCache.valid = false
 }
 
 func flattenEntries(entries []Entry) []Entry {

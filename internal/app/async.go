@@ -11,7 +11,7 @@ func (m Model) loadDirectoryAsync() tea.Cmd {
 	rootPath := m.rootPath
 	showDotfiles := m.showDotfiles
 	return func() tea.Msg {
-		entries := LoadDirectory(rootPath, 0, showDotfiles)
+		entries := LoadDirectoryWithRoot(rootPath, rootPath, 0, showDotfiles)
 		return DirectoryLoadedMsg{Entries: entries}
 	}
 }

@@ -106,6 +106,7 @@ func (m Model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Enter search mode - SHARED
 		case "/":
+			m.clearAllOverlays()
 			m.searching = true
 			m.searchInput.Focus()
 			m.searchInput.SetValue("")
@@ -115,6 +116,7 @@ func (m Model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Show docs overlay - SHARED
 		case "g":
+			m.clearAllOverlays()
 			m.showingDocs = true
 			m.docCursor = 0
 			m.docsScrollOffset = 0
@@ -122,6 +124,7 @@ func (m Model) updateGitStatus(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Enter copy mode - SHARED
 		case "v":
+			m.clearAllOverlays()
 			m.selectMode = true
 			m.selectStart = -1
 			m.selectEnd = -1

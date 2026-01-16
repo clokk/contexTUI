@@ -328,7 +328,12 @@ func (m Model) RenderTree() string {
 		}
 
 		line := indent + icon + e.Name
-		relPath, _ := filepath.Rel(m.rootPath, e.Path)
+
+		// Use cached relative path if available, otherwise compute it
+		relPath := e.RelPath
+		if relPath == "" {
+			relPath, _ = filepath.Rel(m.rootPath, e.Path)
+		}
 
 		// Add git status badge
 		if m.isGitRepo {
