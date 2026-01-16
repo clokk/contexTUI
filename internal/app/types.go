@@ -94,6 +94,9 @@ type Model struct {
 	// Help overlay
 	showingHelp bool // True when help overlay is visible
 
+	// Dotfile visibility
+	showDotfiles bool // True when dotfiles are visible in tree
+
 	// Status message (transient feedback)
 	statusMessage     string
 	statusMessageTime time.Time
@@ -101,6 +104,11 @@ type Model struct {
 	// Registry save state (for debounced background saves)
 	registryDirty  bool // Whether registry needs saving
 	registrySaving bool // Whether a save is in progress
+
+	// Async loading state (for non-blocking UI updates)
+	loadingMessage string // Current loading message (empty = not loading)
+	spinnerFrame   int    // Current spinner animation frame
+	pendingLoads   int    // Number of async load operations in progress
 }
 
 // ScrollTickMsg is sent for continuous scroll tick
@@ -192,6 +200,55 @@ func ScheduleRegistrySave(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(t time.Time) tea.Msg {
 		return SaveRegistryMsg{}
 	})
+}
+
+// SpinnerTickMsg is sent to animate the loading spinner
+type SpinnerTickMsg struct{}
+
+// SpinnerTick returns a command that ticks the spinner animation
+func SpinnerTick() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
+		return SpinnerTickMsg{}
+	})
+}
+
+// SpinnerChars are the braille dot characters for the spinner animation
+var SpinnerChars = []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
+
+// DebouncedFsEventMsg is sent after debounce delay to trigger actual reload
+type DebouncedFsEventMsg struct{}
+
+// ScheduleFsReload returns a command that fires after debounce delay
+func ScheduleFsReload(delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(t time.Time) tea.Msg {
+		return DebouncedFsEventMsg{}
+	})
+}
+
+// DirectoryLoadedMsg is sent when directory entries are loaded asynchronously
+type DirectoryLoadedMsg struct {
+	Entries []Entry
+}
+
+// AllFilesLoadedMsg is sent when all files list is collected asynchronously
+type AllFilesLoadedMsg struct {
+	Files []string
+}
+
+// RegistryLoadedMsg is sent when doc registry is loaded asynchronously
+type RegistryLoadedMsg struct {
+	Registry *groups.ContextDocRegistry
+}
+
+// GitStatusLoadedMsg is sent when git status is loaded asynchronously
+type GitStatusLoadedMsg struct {
+	Status    map[string]git.FileStatus
+	Changes   []git.FileStatus
+	DirStatus map[string]string
+	Branch    string
+	Ahead     int
+	Behind    int
+	HasUpstream bool
 }
 
 // Entry represents a file or directory in the tree

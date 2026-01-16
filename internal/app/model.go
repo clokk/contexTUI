@@ -9,15 +9,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/connorleisz/contexTUI/internal/config"
 	"github.com/connorleisz/contexTUI/internal/git"
-	"github.com/connorleisz/contexTUI/internal/groups"
 	"github.com/fsnotify/fsnotify"
 )
 
 // NewModel creates and initializes a new application model
+// Heavy loading is deferred to Init() for async execution
 func NewModel(rootPath string) Model {
 	absPath, _ := filepath.Abs(rootPath)
 
-	// Load user config
+	// Load user config (fast, local file)
 	cfg := config.Load(absPath)
 
 	// Determine split ratio (config or default)
@@ -26,7 +26,8 @@ func NewModel(rootPath string) Model {
 		splitRatio = cfg.SplitRatio
 	}
 
-	entries := LoadDirectory(absPath, 0)
+	// Determine dotfile visibility (config or default)
+	showDotfiles := cfg.ShowDotfiles
 
 	// Set up search input
 	ti := textinput.New()
@@ -34,26 +35,8 @@ func NewModel(rootPath string) Model {
 	ti.CharLimit = 100
 	ti.Width = 40
 
-	// Collect all files for searching
-	allFiles := CollectAllFiles(absPath)
-
-	// Load doc-based context docs
-	docRegistry, _ := groups.LoadContextDocRegistry(absPath)
-
-	// Check for git repository and load git status
+	// Check for git repository (fast check)
 	isGit, gitRoot := git.IsRepo(absPath)
-	var gitStatus map[string]git.FileStatus
-	var gitDirStatus map[string]string
-	var gitChanges []git.FileStatus
-	var gitBranch string
-	var gitAhead, gitBehind int
-	var gitHasUpstream bool
-	if isGit {
-		gitStatus, gitChanges = git.LoadStatus(gitRoot)
-		gitDirStatus = git.ComputeDirStatus(gitStatus)
-		gitBranch = git.GetBranch(gitRoot)
-		gitAhead, gitBehind, gitHasUpstream = git.GetAheadBehind(gitRoot)
-	}
 
 	// Set up file watcher
 	watcher, _ := fsnotify.NewWatcher()
@@ -78,52 +61,69 @@ func NewModel(rootPath string) Model {
 		watcher.Add(contextDocsPath)
 	}
 
+	// Calculate pending loads count
+	pendingLoads := 3 // directory, allFiles, registry
+	if isGit {
+		pendingLoads = 4 // + git status
+	}
+
 	return Model{
 		rootPath:     absPath,
-		entries:      entries,
+		entries:      nil, // Loaded async in Init()
 		cursor:       0,
 		activePane:   TreePane,
 		splitRatio:   splitRatio,
 		previewCache: make(map[string]CachedPreview),
 		searchInput:  ti,
-		allFiles:     allFiles,
+		allFiles:     nil, // Loaded async in Init()
 		watcher:      watcher,
-		// Context docs
-		docRegistry:  docRegistry,
+		// Context docs - loaded async in Init()
+		docRegistry:      nil,
 		selectedDocs:     make(map[string]bool),
 		selectedAddFiles: make(map[string]bool),
-		// Git integration
-		isGitRepo:      isGit,
-		gitRepoRoot:    gitRoot,
-		gitStatus:      gitStatus,
-		gitDirStatus:   gitDirStatus,
-		gitChanges:     gitChanges,
-		gitBranch:      gitBranch,
-		gitAhead:       gitAhead,
-		gitBehind:      gitBehind,
-		gitHasUpstream: gitHasUpstream,
-		diffCache:      make(map[DiffCacheKey]CachedDiff),
+		// Git integration - loaded async in Init()
+		isGitRepo:    isGit,
+		gitRepoRoot:  gitRoot,
+		gitStatus:    make(map[string]git.FileStatus),
+		gitDirStatus: make(map[string]string),
+		diffCache:    make(map[DiffCacheKey]CachedDiff),
+		// Dotfile visibility
+		showDotfiles: showDotfiles,
+		// Start with loading state
+		loadingMessage: "Starting up...",
+		pendingLoads:   pendingLoads,
 	}
 }
 
 // CollectAllFiles recursively collects all file paths from a directory
-func CollectAllFiles(root string) []string {
+func CollectAllFiles(root string, showDotfiles bool) []string {
 	var files []string
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		// Skip hidden files/dirs and common ignores (except .context-docs.md)
 		name := info.Name()
+		// Handle dotfiles
 		if strings.HasPrefix(name, ".") {
-			if info.IsDir() {
-				return filepath.SkipDir
+			// .git is always hidden
+			if name == ".git" {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
-			// Always show .context-docs.md - it's part of contexTUI workflow
-			if name != ".context-docs.md" {
+			// .context-docs.md is always visible
+			if name == ".context-docs.md" {
+				// continue to add it
+			} else if !showDotfiles {
+				// Skip other dotfiles/dirs unless toggle is on
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 		}
+		// Always skip common package/build directories
 		if name == "node_modules" || name == "vendor" || name == "__pycache__" {
 			if info.IsDir() {
 				return filepath.SkipDir
@@ -141,7 +141,7 @@ func CollectAllFiles(root string) []string {
 }
 
 // LoadDirectory loads directory entries at the specified depth
-func LoadDirectory(path string, depth int) []Entry {
+func LoadDirectory(path string, depth int, showDotfiles bool) []Entry {
 	var entries []Entry
 
 	files, err := os.ReadDir(path)
@@ -150,17 +150,29 @@ func LoadDirectory(path string, depth int) []Entry {
 	}
 
 	for _, f := range files {
-		// Skip hidden files and common ignores (except .context-docs.md)
-		if strings.HasPrefix(f.Name(), ".") && f.Name() != ".context-docs.md" {
-			continue
+		name := f.Name()
+		// Handle dotfiles
+		if strings.HasPrefix(name, ".") {
+			// .git is always hidden
+			if name == ".git" {
+				continue
+			}
+			// .context-docs.md is always visible
+			if name == ".context-docs.md" {
+				// continue to add it
+			} else if !showDotfiles {
+				// Skip other dotfiles unless toggle is on
+				continue
+			}
 		}
-		if f.Name() == "node_modules" || f.Name() == "vendor" || f.Name() == "__pycache__" {
+		// Always skip common package/build directories
+		if name == "node_modules" || name == "vendor" || name == "__pycache__" {
 			continue
 		}
 
 		e := Entry{
-			Name:  f.Name(),
-			Path:  filepath.Join(path, f.Name()),
+			Name:  name,
+			Path:  filepath.Join(path, name),
 			IsDir: f.IsDir(),
 			Depth: depth,
 		}
@@ -172,7 +184,18 @@ func LoadDirectory(path string, depth int) []Entry {
 
 // Init implements tea.Model
 func (m Model) Init() tea.Cmd {
-	return m.waitForFsEvent()
+	// Start async loading of all heavy operations
+	cmds := []tea.Cmd{
+		m.loadDirectoryAsync(),
+		m.loadAllFilesAsync(),
+		m.loadRegistryAsync(),
+		SpinnerTick(),
+		m.waitForFsEvent(),
+	}
+	if m.isGitRepo {
+		cmds = append(cmds, m.loadGitStatusAsync())
+	}
+	return tea.Batch(cmds...)
 }
 
 // waitForFsEvent returns a command that waits for the next filesystem event

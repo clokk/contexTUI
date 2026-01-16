@@ -10,7 +10,6 @@ import (
 	"github.com/connorleisz/contexTUI/internal/clipboard"
 	"github.com/connorleisz/contexTUI/internal/config"
 	"github.com/connorleisz/contexTUI/internal/git"
-	"github.com/connorleisz/contexTUI/internal/groups"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -19,34 +18,88 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	// Handle filesystem events first (before mode checks) so context docs auto-reload
+	// FsEventMsg just schedules a debounced reload (100ms delay)
 	if _, ok := msg.(FsEventMsg); ok {
-		m.entries = LoadDirectory(m.rootPath, 0)
-		m.allFiles = CollectAllFiles(m.rootPath)
-		// Reload doc-based context docs
-		m.docRegistry, _ = groups.LoadContextDocRegistry(m.rootPath)
-		// Refresh git status
-		if m.isGitRepo {
-			m.gitStatus, m.gitChanges = git.LoadStatus(m.gitRepoRoot)
-			m.gitDirStatus = git.ComputeDirStatus(m.gitStatus)
+		return m, tea.Batch(
+			ScheduleFsReload(100*time.Millisecond),
+			m.waitForFsEvent(),
+		)
+	}
+
+	// DebouncedFsEventMsg triggers the actual async reload
+	if _, ok := msg.(DebouncedFsEventMsg); ok {
+		m.loadingMessage = "Refreshing..."
+		m.pendingLoads = 3 // directory, allFiles, registry
+		cmds := []tea.Cmd{
+			m.loadDirectoryAsync(),
+			m.loadAllFilesAsync(),
+			m.loadRegistryAsync(),
+			SpinnerTick(),
 		}
+		if m.isGitRepo {
+			m.pendingLoads = 4 // +git status
+			cmds = append(cmds, m.loadGitStatusAsync())
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	// Handle async directory load completion
+	if msg, ok := msg.(DirectoryLoadedMsg); ok {
+		m.entries = msg.Entries
 		if m.ready {
 			m.tree.SetContent(m.RenderTree())
 		}
-		return m, m.waitForFsEvent()
+		m.checkLoadingComplete()
+		return m, nil
+	}
+
+	// Handle async all files load completion
+	if msg, ok := msg.(AllFilesLoadedMsg); ok {
+		m.allFiles = msg.Files
+		m.checkLoadingComplete()
+		return m, nil
+	}
+
+	// Handle async registry load completion
+	if msg, ok := msg.(RegistryLoadedMsg); ok {
+		m.docRegistry = msg.Registry
+		m.checkLoadingComplete()
+		return m, nil
+	}
+
+	// Handle async git status load completion
+	if msg, ok := msg.(GitStatusLoadedMsg); ok {
+		m.gitStatus = msg.Status
+		m.gitChanges = msg.Changes
+		m.gitDirStatus = msg.DirStatus
+		m.gitBranch = msg.Branch
+		m.gitAhead = msg.Ahead
+		m.gitBehind = msg.Behind
+		m.gitHasUpstream = msg.HasUpstream
+		if m.ready {
+			m.tree.SetContent(m.RenderTree())
+		}
+		m.checkLoadingComplete()
+		return m, nil
+	}
+
+	// Handle spinner animation tick
+	if _, ok := msg.(SpinnerTickMsg); ok {
+		if m.loadingMessage != "" {
+			m.spinnerFrame = (m.spinnerFrame + 1) % len(SpinnerChars)
+			return m, SpinnerTick()
+		}
+		return m, nil
 	}
 
 	// Handle git fetch completion
 	if fetchMsg, ok := msg.(GitFetchDoneMsg); ok {
 		m.gitFetching = false
 		if fetchMsg.Err == nil && m.isGitRepo {
-			// Refresh branch info after fetch
-			m.gitAhead, m.gitBehind, m.gitHasUpstream = git.GetAheadBehind(m.gitRepoRoot)
-			// Also refresh git status
-			m.gitStatus, m.gitChanges = git.LoadStatus(m.gitRepoRoot)
-			m.gitDirStatus = git.ComputeDirStatus(m.gitStatus)
-			if m.ready {
-				m.tree.SetContent(m.RenderTree())
-			}
+			// Refresh git status asynchronously after fetch
+			m.loadingMessage = "Updating git status..."
+			m.pendingLoads = 1
+			return m, tea.Batch(m.loadGitStatusAsync(), SpinnerTick())
 		}
 		return m, nil
 	}
@@ -379,6 +432,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+
+		case ".":
+			// Toggle dotfile visibility
+			m.showDotfiles = !m.showDotfiles
+			// Save to config
+			config.Save(m.rootPath, config.Config{
+				SplitRatio:   m.splitRatio,
+				ShowDotfiles: m.showDotfiles,
+			})
+			// Trigger async reload
+			m.loadingMessage = "Refreshing..."
+			m.pendingLoads = 2
+			cmds := []tea.Cmd{
+				m.loadDirectoryAsync(),
+				m.loadAllFilesAsync(),
+				SpinnerTick(),
+			}
+			// Show status message
+			if m.showDotfiles {
+				m.statusMessage = "Showing dotfiles"
+			} else {
+				m.statusMessage = "Hiding dotfiles"
+			}
+			m.statusMessageTime = time.Now()
+			cmds = append(cmds, ClearStatusAfter(3*time.Second))
+			return m, tea.Batch(cmds...)
 
 		case "f":
 			// Git fetch

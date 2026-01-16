@@ -7,11 +7,11 @@ import (
 
 // ToggleExpand expands or collapses a directory entry
 func (m Model) ToggleExpand(path string) Model {
-	m.entries = toggleExpandRecursive(m.entries, path)
+	m.entries = toggleExpandRecursive(m.entries, path, m.showDotfiles)
 	return m
 }
 
-func toggleExpandRecursive(entries []Entry, path string) []Entry {
+func toggleExpandRecursive(entries []Entry, path string, showDotfiles bool) []Entry {
 	for i, e := range entries {
 		if e.Path == path && e.IsDir {
 			if e.Expanded {
@@ -19,12 +19,12 @@ func toggleExpandRecursive(entries []Entry, path string) []Entry {
 				entries[i].Children = nil
 			} else {
 				entries[i].Expanded = true
-				entries[i].Children = LoadDirectory(path, e.Depth+1)
+				entries[i].Children = LoadDirectory(path, e.Depth+1, showDotfiles)
 			}
 			return entries
 		}
 		if e.Expanded && len(e.Children) > 0 {
-			entries[i].Children = toggleExpandRecursive(e.Children, path)
+			entries[i].Children = toggleExpandRecursive(e.Children, path, showDotfiles)
 		}
 	}
 	return entries
@@ -58,7 +58,7 @@ func (m Model) NavigateToFile(relPath string) Model {
 	// Expand each directory in the path
 	for i := 0; i < len(parts)-1; i++ {
 		currentPath = filepath.Join(currentPath, parts[i])
-		m.entries = expandPath(m.entries, currentPath)
+		m.entries = expandPath(m.entries, currentPath, m.showDotfiles)
 	}
 
 	// Find the file in the flat list and set cursor
@@ -74,15 +74,15 @@ func (m Model) NavigateToFile(relPath string) Model {
 	return m
 }
 
-func expandPath(entries []Entry, path string) []Entry {
+func expandPath(entries []Entry, path string, showDotfiles bool) []Entry {
 	for i, e := range entries {
 		if e.Path == path && e.IsDir && !e.Expanded {
 			entries[i].Expanded = true
-			entries[i].Children = LoadDirectory(path, e.Depth+1)
+			entries[i].Children = LoadDirectory(path, e.Depth+1, showDotfiles)
 			return entries
 		}
 		if e.Expanded && len(e.Children) > 0 {
-			entries[i].Children = expandPath(e.Children, path)
+			entries[i].Children = expandPath(e.Children, path, showDotfiles)
 		}
 	}
 	return entries

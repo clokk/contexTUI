@@ -22,6 +22,21 @@ func (m Model) View() string {
 	header := headerStyle.Render("contexTUI") +
 		styles.Faint.Render(" " + m.rootPath)
 
+	// Add loading spinner to header if loading
+	if m.loadingMessage != "" {
+		spinner := string(SpinnerChars[m.spinnerFrame])
+		loadingIndicator := styles.StatusWarning.Render(spinner + " " + m.loadingMessage)
+		// Calculate padding to right-align the loading indicator
+		headerLen := lipgloss.Width(header)
+		loadingLen := lipgloss.Width(loadingIndicator)
+		padding := m.width - headerLen - loadingLen - 2
+		if padding > 0 {
+			header = header + strings.Repeat(" ", padding) + loadingIndicator
+		} else {
+			header = header + " " + loadingIndicator
+		}
+	}
+
 	paneHeight := m.height - 4 // header(1) + footer(1) + borders(2)
 	footerStyle := styles.Faint
 
@@ -809,6 +824,7 @@ func (m Model) renderHelpOverlay(background string) string {
 	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("g"), descStyle.Render("Context docs")))
 	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("/"), descStyle.Render("Search files")))
 	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("v"), descStyle.Render("Copy mode")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("."), descStyle.Render("Toggle dotfiles")))
 	content.WriteString("\n")
 
 	// Actions

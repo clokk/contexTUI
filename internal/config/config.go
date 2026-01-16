@@ -10,7 +10,8 @@ const FileName = ".contexTUI.json"
 
 // Config represents user preferences saved per-project
 type Config struct {
-	SplitRatio float64 `json:"splitRatio,omitempty"`
+	SplitRatio   float64 `json:"splitRatio,omitempty"`
+	ShowDotfiles bool    `json:"showDotfiles,omitempty"`
 }
 
 // Load loads project-specific configuration

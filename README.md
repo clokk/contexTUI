@@ -71,6 +71,7 @@ Press `?` for help at any time.
 | `c` | Copy file path(s) |
 | `g` | Open context docs |
 | `s` | Toggle git status view |
+| `.` | Toggle dotfiles visibility |
 | `/` | Search files |
 | `?` | Show help |
 | `q` | Quit |
@@ -219,7 +220,11 @@ Respects the [NO_COLOR](https://no-color.org/) standard.
 
 ## Configuration
 
-contexTUI stores user preferences (like split pane ratio) in `.contexTUI.json`. This file is user-specific and should be added to your project's `.gitignore`:
+contexTUI stores user preferences in `.contexTUI.json`:
+- `splitRatio` - Width ratio between tree and preview panes
+- `showDotfiles` - Whether dotfiles are visible in the tree (toggle with `.`)
+
+This file is user-specific and should be added to your project's `.gitignore`:
 
 ```bash
 echo ".contexTUI.json" >> .gitignore
