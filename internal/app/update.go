@@ -166,13 +166,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle help toggle (works from any mode)
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "?" {
 		m.showingHelp = !m.showingHelp
+		if !m.showingHelp {
+			m.helpScrollOffset = 0
+		}
 		return m, nil
 	}
 
-	// Handle help overlay - just close on any key
+	// Handle help overlay - close on q/esc, scroll with j/k
 	if m.showingHelp {
-		if _, ok := msg.(tea.KeyMsg); ok {
-			m.showingHelp = false
+		// Calculate max scroll for clamping
+		helpContentLines := 21 // Number of content lines in help
+		maxContentHeight := m.height - 6 - 4
+		if maxContentHeight < 5 {
+			maxContentHeight = 5
+		}
+		maxScroll := helpContentLines - maxContentHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "q", "esc":
+				m.showingHelp = false
+				m.helpScrollOffset = 0
+			case "j", "down":
+				m.helpScrollOffset++
+				if m.helpScrollOffset > maxScroll {
+					m.helpScrollOffset = maxScroll
+				}
+			case "k", "up":
+				if m.helpScrollOffset > 0 {
+					m.helpScrollOffset--
+				}
+			}
+		}
+		// Mouse wheel handling
+		if mouseMsg, ok := msg.(tea.MouseMsg); ok {
+			if mouseMsg.Button == tea.MouseButtonWheelUp {
+				m.helpScrollOffset -= 3
+				if m.helpScrollOffset < 0 {
+					m.helpScrollOffset = 0
+				}
+			} else if mouseMsg.Button == tea.MouseButtonWheelDown {
+				m.helpScrollOffset += 3
+				if m.helpScrollOffset > maxScroll {
+					m.helpScrollOffset = maxScroll
+				}
+			}
 		}
 		return m, nil
 	}
@@ -610,6 +651,8 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Cancel search
 			m.searching = false
 			m.searchInput.Blur()
+			m.searchScrollOffset = 0
+			m.lastSearchQuery = ""
 			return m, nil
 
 		case "enter":
@@ -618,6 +661,8 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 				result := m.searchResults[m.searchCursor]
 				m.searching = false
 				m.searchInput.Blur()
+				m.searchScrollOffset = 0
+				m.lastSearchQuery = ""
 				// Navigate to the file
 				m = m.NavigateToFile(result.Path)
 				var cmd tea.Cmd
@@ -625,17 +670,43 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			m.searching = false
+			m.searchScrollOffset = 0
+			m.lastSearchQuery = ""
 			return m, nil
 
 		case "up", "ctrl+p":
 			if m.searchCursor > 0 {
 				m.searchCursor--
+				m.ensureSearchCursorVisible()
 			}
 			return m, nil
 
 		case "down", "ctrl+n":
 			if m.searchCursor < len(m.searchResults)-1 {
 				m.searchCursor++
+				m.ensureSearchCursorVisible()
+			}
+			return m, nil
+		}
+
+	case tea.MouseMsg:
+		// Mouse wheel scrolling
+		maxVisible := m.getSearchMaxVisibleResults()
+		maxScroll := len(m.searchResults) - maxVisible
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+
+		if msg.Button == tea.MouseButtonWheelUp {
+			m.searchScrollOffset -= 3
+			if m.searchScrollOffset < 0 {
+				m.searchScrollOffset = 0
+			}
+			return m, nil
+		} else if msg.Button == tea.MouseButtonWheelDown {
+			m.searchScrollOffset += 3
+			if m.searchScrollOffset > maxScroll {
+				m.searchScrollOffset = maxScroll
 			}
 			return m, nil
 		}
@@ -646,29 +717,56 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.searchInput, cmd = m.searchInput.Update(msg)
 	cmds = append(cmds, cmd)
 
-	// Update search results based on current query
+	// Update search results only when query changes
 	query := m.searchInput.Value()
-	if query == "" {
-		m.searchResults = nil
-	} else {
-		matches := fuzzy.Find(query, m.allFiles)
-		m.searchResults = make([]SearchResult, 0, len(matches))
-		for _, match := range matches {
-			if len(m.searchResults) >= 10 { // Limit results
-				break
+	if query != m.lastSearchQuery {
+		m.lastSearchQuery = query
+		if query == "" {
+			m.searchResults = nil
+			m.searchScrollOffset = 0
+		} else {
+			matches := fuzzy.Find(query, m.allFiles)
+			m.searchResults = make([]SearchResult, 0, len(matches))
+			for _, match := range matches {
+				m.searchResults = append(m.searchResults, SearchResult{
+					Path:        m.allFiles[match.Index],
+					DisplayName: m.allFiles[match.Index],
+				})
 			}
-			m.searchResults = append(m.searchResults, SearchResult{
-				Path:        m.allFiles[match.Index],
-				DisplayName: m.allFiles[match.Index],
-			})
-		}
-		// Reset cursor if it's out of bounds
-		if m.searchCursor >= len(m.searchResults) {
+			// Reset cursor and scroll when query changes
 			m.searchCursor = 0
+			m.searchScrollOffset = 0
 		}
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// getSearchMaxVisibleResults calculates max visible results based on viewport
+func (m Model) getSearchMaxVisibleResults() int {
+	fixedHeight := m.height - 6
+	if fixedHeight < 10 {
+		fixedHeight = 10
+	}
+	if fixedHeight > 25 {
+		fixedHeight = 25
+	}
+	maxVisible := fixedHeight - 7
+	if maxVisible < 3 {
+		maxVisible = 3
+	}
+	return maxVisible
+}
+
+// ensureSearchCursorVisible adjusts scroll offset to keep cursor visible
+func (m *Model) ensureSearchCursorVisible() {
+	maxVisible := m.getSearchMaxVisibleResults()
+
+	if m.searchCursor < m.searchScrollOffset {
+		m.searchScrollOffset = m.searchCursor
+	} else if m.searchCursor >= m.searchScrollOffset+maxVisible {
+		m.searchScrollOffset = m.searchCursor - maxVisible + 1
+	}
 }
 
 // updateSelect handles events in copy mode (custom selection with mouse)

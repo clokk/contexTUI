@@ -206,6 +206,31 @@ func stripAnsi(s string) string {
 }
 
 func (m Model) renderSearchOverlay(background string) string {
+	metaStyle := styles.Faint
+
+	// Calculate box dimensions based on viewport
+	boxWidth := m.width * 60 / 100
+	if boxWidth > 70 {
+		boxWidth = 70
+	}
+	if boxWidth < 40 {
+		boxWidth = 40
+	}
+
+	fixedHeight := m.height - 6
+	if fixedHeight < 10 {
+		fixedHeight = 10
+	}
+	if fixedHeight > 25 {
+		fixedHeight = 25
+	}
+
+	// Calculate max visible results (account for input, padding, indicators, footer)
+	maxVisibleResults := fixedHeight - 7
+	if maxVisibleResults < 3 {
+		maxVisibleResults = 3
+	}
+
 	// Build search box content
 	var content strings.Builder
 	content.WriteString(m.searchInput.View())
@@ -213,8 +238,36 @@ func (m Model) renderSearchOverlay(background string) string {
 
 	if len(m.searchResults) == 0 && m.searchInput.Value() != "" {
 		content.WriteString(styles.Faint.Render("No matches"))
-	} else {
-		for i, result := range m.searchResults {
+	} else if len(m.searchResults) > 0 {
+		totalResults := len(m.searchResults)
+
+		// Clamp scroll offset
+		maxScroll := totalResults - maxVisibleResults
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		scrollOffset := m.searchScrollOffset
+		if scrollOffset > maxScroll {
+			scrollOffset = maxScroll
+		}
+		if scrollOffset < 0 {
+			scrollOffset = 0
+		}
+
+		// Scroll indicator (above)
+		if scrollOffset > 0 {
+			content.WriteString(metaStyle.Render("  ▲ more above"))
+			content.WriteString("\n")
+		}
+
+		// Render visible results
+		endIdx := scrollOffset + maxVisibleResults
+		if endIdx > totalResults {
+			endIdx = totalResults
+		}
+
+		for i := scrollOffset; i < endIdx; i++ {
+			result := m.searchResults[i]
 			line := result.DisplayName
 			if i == m.searchCursor {
 				line = styles.Selected.Render(line)
@@ -223,12 +276,23 @@ func (m Model) renderSearchOverlay(background string) string {
 			}
 			content.WriteString(line + "\n")
 		}
+
+		// Scroll indicator (below)
+		if endIdx < totalResults {
+			content.WriteString(metaStyle.Render("  ▼ more below"))
+			content.WriteString("\n")
+		}
+
+		// Result count
+		content.WriteString("\n")
+		content.WriteString(metaStyle.Render(fmt.Sprintf("%d results", totalResults)))
 	}
 
 	// Style the search box
 	boxStyle := styles.ActiveBorder().
 		Padding(1, 2).
-		Width(50)
+		Width(boxWidth).
+		Height(fixedHeight)
 
 	searchBox := boxStyle.Render(content.String())
 
@@ -807,57 +871,118 @@ func (m Model) renderHelpOverlay(background string) string {
 	sectionStyle := styles.SectionHeader
 	keyStyle := styles.Key
 	descStyle := styles.Faint
+	metaStyle := styles.Faint
 
-	var content strings.Builder
+	// Calculate box dimensions based on viewport
+	boxWidth := m.width * 70 / 100
+	if boxWidth > 80 {
+		boxWidth = 80
+	}
+	if boxWidth < 50 {
+		boxWidth = 50
+	}
 
-	content.WriteString(titleStyle.Render("Keyboard Shortcuts"))
-	content.WriteString("\n\n")
+	fixedHeight := m.height - 6
+	if fixedHeight < 15 {
+		fixedHeight = 15
+	}
+	if fixedHeight > 30 {
+		fixedHeight = 30
+	}
+
+	// Build content as lines array
+	var contentLines []string
+
+	contentLines = append(contentLines, titleStyle.Render("Keyboard Shortcuts"))
+	contentLines = append(contentLines, "")
 
 	// Navigation
-	content.WriteString(sectionStyle.Render("Navigation"))
-	content.WriteString("\n")
-	content.WriteString(fmt.Sprintf("  %s  %s\n", keyStyle.Render("j/k ↑/↓"), descStyle.Render("Move cursor")))
-	content.WriteString(fmt.Sprintf("  %s      %s\n", keyStyle.Render("tab"), descStyle.Render("Switch panes")))
-	content.WriteString(fmt.Sprintf("  %s  %s\n", keyStyle.Render("enter/l"), descStyle.Render("Open/expand")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("h"), descStyle.Render("Collapse")))
-	content.WriteString("\n")
+	contentLines = append(contentLines, sectionStyle.Render("Navigation"))
+	contentLines = append(contentLines, fmt.Sprintf("  %s  %s", keyStyle.Render("j/k ↑/↓"), descStyle.Render("Move cursor")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s      %s", keyStyle.Render("tab"), descStyle.Render("Switch panes")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s  %s", keyStyle.Render("enter/l"), descStyle.Render("Open/expand")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("h"), descStyle.Render("Collapse")))
+	contentLines = append(contentLines, "")
 
 	// Views
-	content.WriteString(sectionStyle.Render("Views"))
-	content.WriteString("\n")
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("s"), descStyle.Render("Git status")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("g"), descStyle.Render("Context docs")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("/"), descStyle.Render("Search files")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("v"), descStyle.Render("Copy mode")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("."), descStyle.Render("Toggle dotfiles")))
-	content.WriteString("\n")
+	contentLines = append(contentLines, sectionStyle.Render("Views"))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("s"), descStyle.Render("Git status")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("g"), descStyle.Render("Context docs")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("/"), descStyle.Render("Search files")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("v"), descStyle.Render("Copy mode")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("."), descStyle.Render("Toggle dotfiles")))
+	contentLines = append(contentLines, "")
 
 	// Actions
-	content.WriteString(sectionStyle.Render("Actions"))
-	content.WriteString("\n")
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("n"), descStyle.Render("Create file")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("N"), descStyle.Render("Create folder")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("r"), descStyle.Render("Rename")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("d"), descStyle.Render("Delete")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("c"), descStyle.Render("Copy file path")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("f"), descStyle.Render("Git fetch")))
-	content.WriteString(fmt.Sprintf("  %s      %s\n", keyStyle.Render("←/→"), descStyle.Render("Resize panes")))
-	content.WriteString("\n")
+	contentLines = append(contentLines, sectionStyle.Render("Actions"))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("n"), descStyle.Render("Create file")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("N"), descStyle.Render("Create folder")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("r"), descStyle.Render("Rename")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("d"), descStyle.Render("Delete")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("c"), descStyle.Render("Copy file path")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("f"), descStyle.Render("Git fetch")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s      %s", keyStyle.Render("←/→"), descStyle.Render("Resize panes")))
+	contentLines = append(contentLines, "")
 
 	// General
-	content.WriteString(sectionStyle.Render("General"))
-	content.WriteString("\n")
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("?"), descStyle.Render("Toggle help")))
-	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("q"), descStyle.Render("Quit")))
-	content.WriteString("\n")
+	contentLines = append(contentLines, sectionStyle.Render("General"))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("?"), descStyle.Render("Toggle help")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("q"), descStyle.Render("Quit")))
 
-	content.WriteString(descStyle.Render("Press any key to close"))
+	// Calculate scrolling
+	maxContentHeight := fixedHeight - 4 // Account for box padding/borders
+	totalLines := len(contentLines)
+
+	// Clamp scroll offset
+	maxScroll := totalLines - maxContentHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scrollOffset := m.helpScrollOffset
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	// Build final content with scroll indicators
+	var content strings.Builder
+
+	// Scroll indicator (above)
+	if scrollOffset > 0 {
+		content.WriteString(metaStyle.Render("  ▲ more above"))
+		content.WriteString("\n")
+	}
+
+	// Visible content
+	endIdx := scrollOffset + maxContentHeight
+	if endIdx > totalLines {
+		endIdx = totalLines
+	}
+
+	for i := scrollOffset; i < endIdx; i++ {
+		content.WriteString(contentLines[i])
+		content.WriteString("\n")
+	}
+
+	// Scroll indicator (below)
+	if endIdx < totalLines {
+		content.WriteString(metaStyle.Render("  ▼ more below"))
+		content.WriteString("\n")
+	}
+
+	// Footer
+	content.WriteString("\n")
+	content.WriteString(descStyle.Render("q/esc close · j/k scroll"))
 
 	// Style the help box
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("205")).
-		Padding(1, 3)
+		Padding(1, 3).
+		Width(boxWidth).
+		Height(fixedHeight)
 
 	helpBox := boxStyle.Render(content.String())
 

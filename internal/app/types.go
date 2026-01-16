@@ -42,11 +42,13 @@ type Model struct {
 	draggingSplit bool    // True when dragging the divider
 
 	// Fuzzy finder
-	searching     bool
-	searchInput   textinput.Model
-	searchResults []SearchResult
-	searchCursor  int
-	allFiles      []string // Flat list of all file paths for searching
+	searching          bool
+	searchInput        textinput.Model
+	searchResults      []SearchResult
+	searchCursor       int
+	searchScrollOffset int      // Scroll offset for search results viewport
+	lastSearchQuery    string   // Previous query to detect changes
+	allFiles           []string // Flat list of all file paths for searching
 
 	// Context docs (documentation-first)
 	docRegistry        *groups.ContextDocRegistry // Doc-based context docs
@@ -92,7 +94,8 @@ type Model struct {
 	gitFetching     bool                      // True while fetch is in progress
 
 	// Help overlay
-	showingHelp bool // True when help overlay is visible
+	showingHelp      bool // True when help overlay is visible
+	helpScrollOffset int  // Scroll offset for help overlay
 
 	// Dotfile visibility
 	showDotfiles bool // True when dotfiles are visible in tree
