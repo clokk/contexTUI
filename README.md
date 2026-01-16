@@ -34,15 +34,16 @@ A context-aware terminal file browser for AI-assisted development.
 
 ### Image Preview Support
 
-Image preview works best in modern terminals with true color support:
+Image preview uses Unicode block characters in the preview pane. For pixel-perfect rendering, press `Enter` on an image to open the full-screen overlay using the **Kitty Graphics Protocol**:
 
-| Terminal | Image Quality |
-|----------|---------------|
-| Ghostty | Excellent (Kitty protocol) |
-| Kitty | Excellent (native) |
-| WezTerm | Excellent (Kitty protocol) |
-| iTerm2 | Good (true color) |
-| Others | Good (256 color fallback) |
+| Terminal | Preview Pane | Full-Screen Overlay |
+|----------|--------------|---------------------|
+| Ghostty | Block characters | Kitty protocol (pixel-perfect) |
+| Kitty | Block characters | Kitty protocol (pixel-perfect) |
+| WezTerm | Block characters | Kitty protocol (pixel-perfect) |
+| Konsole | Block characters | Kitty protocol (pixel-perfect) |
+| iTerm2 | Block characters | Not available |
+| Others | Block characters | Not available |
 
 ## Installation
 
@@ -82,11 +83,12 @@ Press `?` for help at any time.
 |-----|--------|
 | `j/k` | Move up/down |
 | `h/l` | Collapse/expand or switch panes |
-| `enter` | Open directory or select file |
+| `enter` | Open directory, select file, or image overlay |
 | `n` | Create new file |
 | `N` | Create new folder |
 | `r` | Rename file or folder |
 | `d` | Delete file or folder |
+| `o` | Open file in OS default application |
 | `c` | Copy file path(s) |
 | `g` | Open context docs |
 | `s` | Toggle git status view |

@@ -5,7 +5,7 @@
 
 ## Description
 
-contexTUI supports previewing image files directly in the terminal. When you select an image file (PNG, JPG, GIF, WebP, or SVG), it renders in the preview pane using Unicode block characters with true color support.
+contexTUI supports previewing image files directly in the terminal. When you select an image file (PNG, JPG, GIF, WebP, or SVG), it renders in the preview pane using Unicode block characters. For supported terminals, press `Enter` to open a full-screen overlay using the Kitty Graphics Protocol for pixel-perfect rendering.
 
 ## Key Files
 
@@ -41,41 +41,57 @@ On startup, contexTUI detects your terminal's graphics capabilities:
 | Konsole | `KONSOLE_VERSION` env var | Kitty Graphics |
 | Others | Fallback | Unicode Blocks |
 
-### Rendering
+### Rendering Modes
 
-Images are rendered using **Unicode half-block characters** (`▀`) with ANSI true color:
+#### Preview Pane (Default)
+
+Images in the preview pane are rendered using **Unicode half-block characters** (`▀`) with ANSI true color:
 - Each character represents 2 vertical pixels
-- Foreground color = top pixel
-- Background color = bottom pixel
-- Results in a 2:1 aspect ratio correction
+- Foreground color = top pixel, background color = bottom pixel
+- Works in any terminal with true color support
+- Automatically scales to fit the preview pane
+
+#### Full-Screen Overlay (Kitty Protocol)
+
+Press `Enter` while viewing an image to open the **full-screen overlay**:
+- Uses the **Kitty Graphics Protocol** for pixel-perfect rendering
+- Image is displayed at native resolution (scaled to fit screen)
+- Bordered frame shows filename, dimensions, and format
+- Press `Esc` or `q` to exit and return to normal view
+- Only available in terminals that support Kitty Graphics (Ghostty, Kitty, WezTerm, Konsole)
+
+The Kitty Graphics Protocol transmits the actual image data (PNG format) to the terminal, which renders it natively. This provides much higher quality than Unicode block approximation.
 
 ### SVG Handling
 
 SVG files are rasterized before display:
 1. Parsed using `tdewolff/canvas`
-2. Scaled to fit the preview pane
-3. Rendered at 2x resolution for quality
-4. Converted to block characters
+2. Scaled to fit the preview pane (or screen in overlay mode)
+3. Rendered at high resolution for quality
+4. Displayed via block characters or Kitty protocol
 
 ## Usage
 
 1. Navigate to an image file in the tree pane
-2. The image automatically renders in the preview pane
-3. A header shows: filename, dimensions (width × height)
+2. The image automatically renders in the preview pane (block characters)
+3. Press `Enter` to open full-screen overlay (Kitty protocol, if supported)
+4. Press `o` to open the image in your OS default application
+5. Press `Esc` or `q` to exit overlay mode
 
 ## Caching
 
 Images are cached after first render:
-- Cache key: file path
-- Invalidation: file modification time changes
+- Cache key: file path + viewport dimensions
+- Invalidation: file modification time or significant viewport size change
 - Re-selecting a cached image is instant
 
 ## Limitations
 
 - **GIF animations**: Only the first frame is displayed
-- **Very large images**: Scaled down to fit the preview pane
-- **Color accuracy**: Depends on terminal's true color support
-- **Resolution**: Limited by terminal cell size (~2 pixels per character vertically)
+- **Very large images**: Scaled down to fit the preview pane/screen
+- **Color accuracy**: Block rendering depends on terminal's true color support
+- **Overlay mode**: Only available in Kitty-compatible terminals
+- **Overlay bottom border**: May be partially covered by the Kitty image overlay
 
 ## Drag and Drop Import
 
