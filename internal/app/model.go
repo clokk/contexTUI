@@ -35,6 +35,12 @@ func NewModel(rootPath string) Model {
 	ti.CharLimit = 100
 	ti.Width = 40
 
+	// Set up file operation input
+	foInput := textinput.New()
+	foInput.Placeholder = "filename"
+	foInput.CharLimit = 255
+	foInput.Width = 40 // Will be adjusted dynamically based on overlay width
+
 	// Check for git repository (fast check)
 	isGit, gitRoot := git.IsRepo(absPath)
 
@@ -89,6 +95,8 @@ func NewModel(rootPath string) Model {
 		diffCache:    make(map[DiffCacheKey]CachedDiff),
 		// Dotfile visibility
 		showDotfiles: showDotfiles,
+		// File operations
+		fileOpInput: foInput,
 		// Start with loading state
 		loadingMessage: "Starting up...",
 		pendingLoads:   pendingLoads,

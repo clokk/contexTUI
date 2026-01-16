@@ -1,6 +1,7 @@
 package app
 
 import (
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -135,6 +136,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle file operation completion
+	if msg, ok := msg.(FileOpCompleteMsg); ok {
+		m.fileOpMode = FileOpNone
+		m.fileOpInput.Blur()
+		m.fileOpError = ""
+		m.fileOpConfirm = false
+		m.fileOpScrollOffset = 0
+
+		if msg.Success {
+			opNames := map[FileOpMode]string{
+				FileOpCreateFile:   "Created",
+				FileOpCreateFolder: "Created folder",
+				FileOpRename:       "Renamed to",
+				FileOpDelete:       "Deleted",
+			}
+			if msg.NewPath != "" {
+				m.statusMessage = opNames[msg.Op] + " " + filepath.Base(msg.NewPath)
+			} else {
+				m.statusMessage = opNames[msg.Op] + " " + filepath.Base(m.fileOpTargetPath)
+			}
+		} else {
+			m.statusMessage = "Error: " + msg.Error.Error()
+		}
+		m.statusMessageTime = time.Now()
+		return m, ClearStatusAfter(5 * time.Second)
+	}
+
 	// Handle help toggle (works from any mode)
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "?" {
 		m.showingHelp = !m.showingHelp
@@ -167,6 +195,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle git status view mode
 	if m.gitStatusMode {
 		return m.updateGitStatus(msg)
+	}
+
+	// Handle file operation mode
+	if m.fileOpMode != FileOpNone {
+		return m.updateFileOp(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -378,6 +411,69 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.statusMessageTime = time.Now()
 					return m, ClearStatusAfter(3 * time.Second)
+				}
+			}
+
+		case "n":
+			// Create new file
+			if m.activePane == TreePane {
+				m.fileOpMode = FileOpCreateFile
+				m.fileOpInput.SetValue("")
+				m.fileOpInput.Placeholder = "filename"
+				m.fileOpInput.Focus()
+				m.fileOpTargetPath = m.getTargetDirectory()
+				m.fileOpError = ""
+				m.fileOpConfirm = false
+				m.fileOpScrollOffset = 0
+				return m, textinput.Blink
+			}
+
+		case "N":
+			// Create new folder
+			if m.activePane == TreePane {
+				m.fileOpMode = FileOpCreateFolder
+				m.fileOpInput.SetValue("")
+				m.fileOpInput.Placeholder = "folder name"
+				m.fileOpInput.Focus()
+				m.fileOpTargetPath = m.getTargetDirectory()
+				m.fileOpError = ""
+				m.fileOpConfirm = false
+				m.fileOpScrollOffset = 0
+				return m, textinput.Blink
+			}
+
+		case "r":
+			// Rename file or folder
+			if m.activePane == TreePane {
+				flat := m.FlatEntries()
+				if m.cursor < len(flat) {
+					e := flat[m.cursor]
+					m.fileOpMode = FileOpRename
+					m.fileOpInput.SetValue(e.Name)
+					m.fileOpInput.Placeholder = "new name"
+					m.fileOpInput.Focus()
+					// Select all text for easy replacement
+					m.fileOpInput.CursorEnd()
+					m.fileOpTargetPath = e.Path
+					m.fileOpError = ""
+					m.fileOpConfirm = false
+					m.fileOpScrollOffset = 0
+					return m, textinput.Blink
+				}
+			}
+
+		case "d", "x":
+			// Delete file or folder
+			if m.activePane == TreePane {
+				flat := m.FlatEntries()
+				if m.cursor < len(flat) {
+					e := flat[m.cursor]
+					m.fileOpMode = FileOpDelete
+					m.fileOpTargetPath = e.Path
+					m.fileOpError = ""
+					m.fileOpConfirm = false
+					m.fileOpScrollOffset = 0
+					return m, nil
 				}
 			}
 

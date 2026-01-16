@@ -109,6 +109,14 @@ type Model struct {
 	loadingMessage string // Current loading message (empty = not loading)
 	spinnerFrame   int    // Current spinner animation frame
 	pendingLoads   int    // Number of async load operations in progress
+
+	// File operations
+	fileOpMode         FileOpMode      // Current file operation mode
+	fileOpInput        textinput.Model // Text input for name entry
+	fileOpTargetPath   string          // Path being operated on
+	fileOpError        string          // Error message to display
+	fileOpConfirm      bool            // True when showing delete confirmation
+	fileOpScrollOffset int             // Scroll offset for long paths/errors
 }
 
 // ScrollTickMsg is sent for continuous scroll tick
@@ -242,13 +250,32 @@ type RegistryLoadedMsg struct {
 
 // GitStatusLoadedMsg is sent when git status is loaded asynchronously
 type GitStatusLoadedMsg struct {
-	Status    map[string]git.FileStatus
-	Changes   []git.FileStatus
-	DirStatus map[string]string
-	Branch    string
-	Ahead     int
-	Behind    int
+	Status      map[string]git.FileStatus
+	Changes     []git.FileStatus
+	DirStatus   map[string]string
+	Branch      string
+	Ahead       int
+	Behind      int
 	HasUpstream bool
+}
+
+// FileOpMode represents the current file operation
+type FileOpMode int
+
+const (
+	FileOpNone FileOpMode = iota
+	FileOpCreateFile
+	FileOpCreateFolder
+	FileOpRename
+	FileOpDelete
+)
+
+// FileOpCompleteMsg is sent when a file operation completes
+type FileOpCompleteMsg struct {
+	Op      FileOpMode
+	Success bool
+	Error   error
+	NewPath string // For create/rename, the resulting path
 }
 
 // Entry represents a file or directory in the tree

@@ -57,6 +57,7 @@ Press `?` for help at any time.
 ## Features
 
 - **File tree + preview** - Navigate and preview files in a split pane
+- **File management** - Create, rename, and delete files and folders
 - **Context docs** - Documentation-first context system
 - **Git integration** - Status badges, diff preview, branch display
 - **Copy as context** - Copy files as `@filepath` references for AI tools
@@ -68,6 +69,10 @@ Press `?` for help at any time.
 | `j/k` | Move up/down |
 | `h/l` | Collapse/expand or switch panes |
 | `enter` | Open directory or select file |
+| `n` | Create new file |
+| `N` | Create new folder |
+| `r` | Rename file or folder |
+| `d` | Delete file or folder |
 | `c` | Copy file path(s) |
 | `g` | Open context docs |
 | `s` | Toggle git status view |

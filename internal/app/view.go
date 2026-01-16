@@ -127,6 +127,11 @@ func (m Model) View() string {
 		return m.renderDocsOverlay(mainView)
 	}
 
+	// Overlay file operation if active
+	if m.fileOpMode != FileOpNone {
+		return m.renderFileOpOverlay(mainView)
+	}
+
 	return mainView
 }
 
@@ -830,6 +835,10 @@ func (m Model) renderHelpOverlay(background string) string {
 	// Actions
 	content.WriteString(sectionStyle.Render("Actions"))
 	content.WriteString("\n")
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("n"), descStyle.Render("Create file")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("N"), descStyle.Render("Create folder")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("r"), descStyle.Render("Rename")))
+	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("d"), descStyle.Render("Delete")))
 	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("c"), descStyle.Render("Copy file path")))
 	content.WriteString(fmt.Sprintf("  %s        %s\n", keyStyle.Render("f"), descStyle.Render("Git fetch")))
 	content.WriteString(fmt.Sprintf("  %s      %s\n", keyStyle.Render("←/→"), descStyle.Render("Resize panes")))
@@ -987,4 +996,157 @@ func (m Model) renderGitStatusView(paneHeight int) string {
 	rightPane := previewStyle.Render(m.preview.View())
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+}
+
+// renderFileOpOverlay renders the file operation overlay (create/rename/delete)
+func (m Model) renderFileOpOverlay(background string) string {
+	// Calculate box dimensions based on viewport
+	boxWidth := m.width * 80 / 100
+	if boxWidth > 100 {
+		boxWidth = 100
+	}
+	if boxWidth < 50 {
+		boxWidth = 50
+	}
+
+	// Fixed height based on viewport
+	fixedHeight := m.height - 6
+	if fixedHeight < 15 {
+		fixedHeight = 15
+	}
+	if fixedHeight > 20 {
+		fixedHeight = 20 // Cap height for file operations (they don't need much)
+	}
+
+	// Update text input width to match box
+	inputWidth := boxWidth - 8 // Account for padding and borders
+	if inputWidth > 60 {
+		inputWidth = 60
+	}
+	m.fileOpInput.Width = inputWidth
+
+	// Styles
+	titleStyle := styles.Header
+	metaStyle := styles.Faint
+	errorStyle := styles.StatusError
+	warningStyle := styles.StatusWarning
+
+	var contentLines []string
+
+	switch m.fileOpMode {
+	case FileOpCreateFile:
+		contentLines = append(contentLines, titleStyle.Render("Create File"))
+		contentLines = append(contentLines, "")
+		// Wrap target path if long
+		targetLabel := "in: " + m.fileOpTargetPath
+		wrapped := wrapText(targetLabel, boxWidth-8)
+		for _, line := range wrapped {
+			contentLines = append(contentLines, metaStyle.Render(line))
+		}
+		contentLines = append(contentLines, "")
+		contentLines = append(contentLines, m.fileOpInput.View())
+
+	case FileOpCreateFolder:
+		contentLines = append(contentLines, titleStyle.Render("Create Folder"))
+		contentLines = append(contentLines, "")
+		targetLabel := "in: " + m.fileOpTargetPath
+		wrapped := wrapText(targetLabel, boxWidth-8)
+		for _, line := range wrapped {
+			contentLines = append(contentLines, metaStyle.Render(line))
+		}
+		contentLines = append(contentLines, "")
+		contentLines = append(contentLines, m.fileOpInput.View())
+
+	case FileOpRename:
+		contentLines = append(contentLines, titleStyle.Render("Rename"))
+		contentLines = append(contentLines, "")
+		wrapped := wrapText(m.fileOpTargetPath, boxWidth-8)
+		for _, line := range wrapped {
+			contentLines = append(contentLines, metaStyle.Render(line))
+		}
+		contentLines = append(contentLines, "")
+		contentLines = append(contentLines, m.fileOpInput.View())
+
+	case FileOpDelete:
+		contentLines = append(contentLines, warningStyle.Render("Delete"))
+		contentLines = append(contentLines, "")
+		wrapped := wrapText(m.fileOpTargetPath, boxWidth-8)
+		for _, line := range wrapped {
+			contentLines = append(contentLines, line)
+		}
+		contentLines = append(contentLines, "")
+		if m.fileOpConfirm {
+			contentLines = append(contentLines, errorStyle.Render("Press Enter or 'y' to confirm deletion"))
+		} else {
+			contentLines = append(contentLines, metaStyle.Render("Press Enter to confirm"))
+		}
+	}
+
+	// Add error message if present
+	if m.fileOpError != "" {
+		contentLines = append(contentLines, "")
+		contentLines = append(contentLines, errorStyle.Render(m.fileOpError))
+	}
+
+	// Add footer hint
+	contentLines = append(contentLines, "")
+	contentLines = append(contentLines, metaStyle.Render("[enter] confirm  [esc] cancel"))
+
+	// Calculate scrolling
+	maxContentHeight := fixedHeight - 4 // Account for box padding/borders
+	totalLines := len(contentLines)
+
+	// Clamp scroll offset
+	maxScroll := totalLines - maxContentHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scrollOffset := m.fileOpScrollOffset
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	// Build final content with scroll indicators
+	var content strings.Builder
+
+	// Scroll indicator (above)
+	if scrollOffset > 0 {
+		content.WriteString(metaStyle.Render("  ▲ more above"))
+		content.WriteString("\n")
+	}
+
+	// Visible content
+	endIdx := scrollOffset + maxContentHeight
+	if endIdx > totalLines {
+		endIdx = totalLines
+	}
+
+	for i := scrollOffset; i < endIdx; i++ {
+		content.WriteString(contentLines[i])
+		content.WriteString("\n")
+	}
+
+	// Scroll indicator (below)
+	if endIdx < totalLines {
+		content.WriteString(metaStyle.Render("  ▼ more below"))
+	}
+
+	// Create the box
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Padding(1, 2).
+		Width(boxWidth).
+		Height(fixedHeight)
+
+	opBox := boxStyle.Render(content.String())
+
+	return lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		opBox,
+	)
 }
