@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ func (m Model) updateFileOp(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fileOpError = ""
 			m.fileOpConfirm = false
 			m.fileOpScrollOffset = 0
+			m.fileOpSourcePath = "" // Clear import source
 			return m, nil
 
 		case "enter":
@@ -87,6 +89,9 @@ func (m Model) executeFileOp() tea.Cmd {
 		return renameAsync(m.fileOpTargetPath, newPath)
 	case FileOpDelete:
 		return deleteAsync(m.fileOpTargetPath)
+	case FileOpImport:
+		destPath := filepath.Join(m.fileOpTargetPath, m.fileOpInput.Value())
+		return copyFileAsync(m.fileOpSourcePath, destPath)
 	}
 	return nil
 }
@@ -190,5 +195,39 @@ func deleteAsync(path string) tea.Cmd {
 			return FileOpCompleteMsg{Op: FileOpDelete, Success: false, Error: err}
 		}
 		return FileOpCompleteMsg{Op: FileOpDelete, Success: true}
+	}
+}
+
+func copyFileAsync(src, dst string) tea.Cmd {
+	return func() tea.Msg {
+		srcFile, err := os.Open(src)
+		if err != nil {
+			return FileOpCompleteMsg{Op: FileOpImport, Success: false, Error: err}
+		}
+		defer srcFile.Close()
+
+		srcInfo, err := srcFile.Stat()
+		if err != nil {
+			return FileOpCompleteMsg{Op: FileOpImport, Success: false, Error: err}
+		}
+
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return FileOpCompleteMsg{Op: FileOpImport, Success: false, Error: err}
+		}
+
+		dstFile, err := os.Create(dst)
+		if err != nil {
+			return FileOpCompleteMsg{Op: FileOpImport, Success: false, Error: err}
+		}
+		defer dstFile.Close()
+
+		if _, err := io.Copy(dstFile, srcFile); err != nil {
+			return FileOpCompleteMsg{Op: FileOpImport, Success: false, Error: err}
+		}
+
+		// Preserve permissions (non-fatal if fails)
+		os.Chmod(dst, srcInfo.Mode())
+
+		return FileOpCompleteMsg{Op: FileOpImport, Success: true, NewPath: dst}
 	}
 }

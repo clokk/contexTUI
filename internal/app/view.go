@@ -16,6 +16,11 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
+	// Image overlay mode - render ONLY the Kitty image
+	if m.imageOverlayMode && m.imageOverlayData != "" {
+		return m.imageOverlayData
+	}
+
 	// Header
 	headerStyle := styles.Header.Copy().Padding(0, 1)
 
@@ -99,6 +104,8 @@ func (m Model) View() string {
 			Height(paneHeight).
 			Padding(0, 1)
 
+		// Render preview content - viewport handles both images and text
+		// (image content is set in the viewport when ImageLoadedMsg is received)
 		preview := previewStyle.Render(m.preview.View())
 
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tree, preview)
@@ -133,6 +140,33 @@ func (m Model) View() string {
 	}
 
 	return mainView
+}
+
+// renderImagePreview renders the image preview with metadata
+func (m Model) renderImagePreview() string {
+	if m.currentImage == nil {
+		if m.loading {
+			return "Loading image..."
+		}
+		return "Select an image to preview"
+	}
+
+	if m.currentImage.Error != nil {
+		return styles.StatusError.Render("Error: " + m.currentImage.Error.Error())
+	}
+
+	var b strings.Builder
+
+	// Header with image info
+	filename := filepath.Base(m.currentImage.Path)
+	info := fmt.Sprintf("%s  %dx%d", filename, m.currentImage.Width, m.currentImage.Height)
+	b.WriteString(styles.Faint.Render(info))
+	b.WriteString("\n\n")
+
+	// Rendered image
+	b.WriteString(m.currentImage.RenderData)
+
+	return b.String()
 }
 
 // renderPreviewWithSelection renders the preview content with selection highlighting
@@ -924,6 +958,8 @@ func (m Model) renderHelpOverlay(background string) string {
 	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("N"), descStyle.Render("Create folder")))
 	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("r"), descStyle.Render("Rename")))
 	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("d"), descStyle.Render("Delete")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("o"), descStyle.Render("Open in OS")))
+	contentLines = append(contentLines, fmt.Sprintf("  %s    %s", keyStyle.Render("Enter"), descStyle.Render("Image preview")))
 	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("c"), descStyle.Render("Copy file path")))
 	contentLines = append(contentLines, fmt.Sprintf("  %s        %s", keyStyle.Render("f"), descStyle.Render("Git fetch")))
 	contentLines = append(contentLines, fmt.Sprintf("  %s      %s", keyStyle.Render("←/→"), descStyle.Render("Resize panes")))
@@ -1210,6 +1246,25 @@ func (m Model) renderFileOpOverlay(background string) string {
 		} else {
 			contentLines = append(contentLines, metaStyle.Render("Press Enter to confirm"))
 		}
+
+	case FileOpImport:
+		contentLines = append(contentLines, titleStyle.Render("Import File"))
+		contentLines = append(contentLines, "")
+		// Show source file path
+		sourceLabel := "from: " + m.fileOpSourcePath
+		wrapped := wrapText(sourceLabel, boxWidth-8)
+		for _, line := range wrapped {
+			contentLines = append(contentLines, metaStyle.Render(line))
+		}
+		contentLines = append(contentLines, "")
+		// Show target directory
+		targetLabel := "to: " + m.fileOpTargetPath
+		wrapped = wrapText(targetLabel, boxWidth-8)
+		for _, line := range wrapped {
+			contentLines = append(contentLines, metaStyle.Render(line))
+		}
+		contentLines = append(contentLines, "")
+		contentLines = append(contentLines, m.fileOpInput.View())
 	}
 
 	// Add error message if present

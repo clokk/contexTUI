@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/connorleisz/contexTUI/internal/config"
 	"github.com/connorleisz/contexTUI/internal/git"
+	"github.com/connorleisz/contexTUI/internal/terminal"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -73,6 +74,9 @@ func NewModel(rootPath string) Model {
 		pendingLoads = 4 // + git status
 	}
 
+	// Detect terminal capabilities
+	termCaps := terminal.Detect()
+
 	return Model{
 		rootPath:     absPath,
 		entries:      nil, // Loaded async in Init()
@@ -97,6 +101,9 @@ func NewModel(rootPath string) Model {
 		showDotfiles: showDotfiles,
 		// File operations
 		fileOpInput: foInput,
+		// Terminal capabilities and image preview
+		termCaps:   termCaps,
+		imageCache: make(map[string]CachedImage),
 		// Start with loading state
 		loadingMessage: "Starting up...",
 		pendingLoads:   pendingLoads,

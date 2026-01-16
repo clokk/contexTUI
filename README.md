@@ -32,6 +32,18 @@ A context-aware terminal file browser for AI-assisted development.
 | Windows | Native |
 | WSL | Native (via clip.exe) |
 
+### Image Preview Support
+
+Image preview works best in modern terminals with true color support:
+
+| Terminal | Image Quality |
+|----------|---------------|
+| Ghostty | Excellent (Kitty protocol) |
+| Kitty | Excellent (native) |
+| WezTerm | Excellent (Kitty protocol) |
+| iTerm2 | Good (true color) |
+| Others | Good (256 color fallback) |
+
 ## Installation
 
 ```bash
@@ -57,6 +69,8 @@ Press `?` for help at any time.
 ## Features
 
 - **File tree + preview** - Navigate and preview files in a split pane
+- **Image preview** - View PNG, JPG, GIF, WebP, and SVG images in the terminal
+- **Drag and drop import** - Drag files into the terminal to import them
 - **File management** - Create, rename, and delete files and folders
 - **Context docs** - Documentation-first context system
 - **Git integration** - Status badges, diff preview, branch display

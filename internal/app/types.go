@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/connorleisz/contexTUI/internal/git"
 	"github.com/connorleisz/contexTUI/internal/groups"
+	"github.com/connorleisz/contexTUI/internal/terminal"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -123,6 +124,19 @@ type Model struct {
 	fileOpError        string          // Error message to display
 	fileOpConfirm      bool            // True when showing delete confirmation
 	fileOpScrollOffset int             // Scroll offset for long paths/errors
+	fileOpSourcePath   string          // Source path for import operation
+
+	// Terminal capabilities
+	termCaps terminal.Capabilities
+
+	// Image preview
+	previewIsImage bool                    // True when previewing an image
+	currentImage   *ImageLoadedMsg         // Current image preview data
+	imageCache     map[string]CachedImage  // Path -> cached image render
+
+	// Image overlay mode (full-screen Kitty rendering)
+	imageOverlayMode bool   // Whether image overlay is active
+	imageOverlayData string // Pre-rendered Kitty escape sequences
 }
 
 // ScrollTickMsg is sent for continuous scroll tick
@@ -277,6 +291,7 @@ const (
 	FileOpCreateFolder
 	FileOpRename
 	FileOpDelete
+	FileOpImport // Import file via drag-and-drop
 )
 
 // FileOpCompleteMsg is sent when a file operation completes
@@ -285,6 +300,30 @@ type FileOpCompleteMsg struct {
 	Success bool
 	Error   error
 	NewPath string // For create/rename, the resulting path
+}
+
+// ImageLoadedMsg is sent when an image is loaded and rendered
+type ImageLoadedMsg struct {
+	Path       string
+	Width      int       // Original image width in pixels
+	Height     int       // Original image height in pixels
+	RenderW    int       // Rendered width in terminal cells
+	RenderH    int       // Rendered height in terminal cells
+	RenderData string    // Pre-rendered terminal escape sequences or block chars
+	ModTime    time.Time
+	Error      error
+}
+
+// CachedImage stores pre-rendered image data
+type CachedImage struct {
+	RenderData  string
+	Width       int       // Original image width
+	Height      int       // Original image height
+	RenderW     int       // Rendered width in terminal cells
+	RenderH     int       // Rendered height in terminal cells
+	ViewportW   int       // Viewport width when cached (for invalidation)
+	ViewportH   int       // Viewport height when cached (for invalidation)
+	ModTime     time.Time
 }
 
 // Entry represents a file or directory in the tree

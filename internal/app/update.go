@@ -1,7 +1,12 @@
 package app
 
 import (
+	"fmt"
+	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -11,6 +16,8 @@ import (
 	"github.com/connorleisz/contexTUI/internal/clipboard"
 	"github.com/connorleisz/contexTUI/internal/config"
 	"github.com/connorleisz/contexTUI/internal/git"
+	"github.com/connorleisz/contexTUI/internal/terminal"
+	"github.com/connorleisz/contexTUI/internal/ui/styles"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -67,6 +74,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loadGitStatusAsync())
 		}
 		return m, tea.Batch(cmds...)
+	}
+
+	// Handle image overlay mode - intercept all input
+	if m.imageOverlayMode {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "esc", "q":
+				m.imageOverlayMode = false
+				m.imageOverlayData = ""
+				// Clear Kitty images and force redraw
+				return m, tea.Sequence(
+					tea.Printf("%s", ClearKittyImages()),
+					tea.ClearScreen,
+				)
+			}
+		}
+		return m, nil // Ignore all other input in overlay mode
 	}
 
 	// Handle async directory load completion
@@ -178,6 +202,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fileOpError = ""
 		m.fileOpConfirm = false
 		m.fileOpScrollOffset = 0
+		m.fileOpSourcePath = "" // Clear import source
 
 		if msg.Success {
 			opNames := map[FileOpMode]string{
@@ -185,6 +210,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				FileOpCreateFolder: "Created folder",
 				FileOpRename:       "Renamed to",
 				FileOpDelete:       "Deleted",
+				FileOpImport:       "Imported",
 			}
 			if msg.NewPath != "" {
 				m.statusMessage = opNames[msg.Op] + " " + filepath.Base(msg.NewPath)
@@ -196,6 +222,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusMessageTime = time.Now()
 		return m, ClearStatusAfter(5 * time.Second)
+	}
+
+	// Detect file drop via bracketed paste
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Paste {
+		pastedText := string(keyMsg.Runes)
+		if sourcePath := detectFileDrop(pastedText); sourcePath != "" {
+			return m.handleFileDrop(sourcePath)
+		}
 	}
 
 	// Handle help toggle (works from any mode)
@@ -292,6 +326,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.previewCache[msg.Path] = CachedPreview{
 					Content: msg.Content,
 					ModTime: msg.ModTime,
+				}
+			}
+		}
+		return m, nil
+
+	case ImageLoadedMsg:
+		// Only update if this is still the file we're waiting for
+		if msg.Path == m.previewPath {
+			m.loading = false
+			m.currentImage = &msg
+			m.previewIsImage = true
+
+			// Build the preview content with header
+			if msg.Error == nil {
+				var content strings.Builder
+				filename := filepath.Base(msg.Path)
+				info := fmt.Sprintf("%s  %dx%d", filename, msg.Width, msg.Height)
+				content.WriteString(styles.Faint.Render(info))
+				content.WriteString("\n\n")
+				content.WriteString(msg.RenderData)
+
+				// Set viewport content for scrolling support
+				m.preview.SetContent(content.String())
+				m.preview.GotoTop()
+			}
+
+			// Cache the rendered image if no error
+			if msg.Error == nil && !msg.ModTime.IsZero() {
+				if m.imageCache == nil {
+					m.imageCache = make(map[string]CachedImage)
+				}
+				m.imageCache[msg.Path] = CachedImage{
+					RenderData: msg.RenderData,
+					Width:      msg.Width,
+					Height:     msg.Height,
+					RenderW:    msg.RenderW,
+					RenderH:    msg.RenderH,
+					ViewportW:  m.preview.Width,
+					ViewportH:  m.preview.Height,
+					ModTime:    msg.ModTime,
 				}
 			}
 		}
@@ -438,6 +512,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter", "l":
+			// First check if we should enter image overlay mode
+			if m.previewIsImage && m.currentImage != nil &&
+				m.termCaps.Graphics == terminal.ProtocolKitty {
+				overlayData, err := LoadImageForOverlay(m.currentImage.Path, m.width, m.height)
+				if err == nil && overlayData != "" {
+					m.imageOverlayMode = true
+					m.imageOverlayData = overlayData
+					return m, nil
+				}
+			}
+			// Normal tree navigation
 			if m.activePane == TreePane {
 				flat := m.FlatEntries()
 				if m.cursor < len(flat) {
@@ -543,6 +628,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.fileOpTargetPath = e.Path
 					return m, nil
 				}
+			}
+
+		case "o":
+			// Open file in OS default application
+			var filePath string
+			if m.gitStatusMode && m.gitStatusCursor < len(m.gitChanges) {
+				filePath = filepath.Join(m.gitRepoRoot, m.gitChanges[m.gitStatusCursor].Path)
+			} else if m.activePane == TreePane {
+				flat := m.FlatEntries()
+				if m.cursor < len(flat) {
+					filePath = flat[m.cursor].Path
+				}
+			} else if m.previewPath != "" {
+				filePath = m.previewPath
+			}
+			if filePath != "" {
+				return m, openInOS(filePath)
 			}
 
 		case "/":
@@ -952,4 +1054,88 @@ func (m Model) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 // copySelection copies the selected lines from preview to clipboard
 func (m Model) copySelection() error {
 	return clipboard.CopyLines(m.previewLines, m.selectStart, m.selectEnd, StripLineNumbers)
+}
+
+// detectFileDrop checks if pasted text is a file path and returns the cleaned path
+// Supports various path formats from different terminals
+func detectFileDrop(text string) string {
+	text = strings.TrimSpace(text)
+
+	// Handle various terminal escape formats
+	text = strings.ReplaceAll(text, "\\ ", " ") // macOS Terminal escapes
+	text = strings.Trim(text, "'\"")            // Remove quotes
+
+	// Handle file:// URIs
+	if strings.HasPrefix(text, "file://") {
+		text = strings.TrimPrefix(text, "file://")
+		if decoded, err := url.PathUnescape(text); err == nil {
+			text = decoded
+		}
+	}
+
+	// Validate path format
+	if !strings.HasPrefix(text, "/") && !isWindowsPath(text) {
+		return ""
+	}
+
+	// Check file exists and is not a directory
+	info, err := os.Stat(text)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+
+	return text
+}
+
+// isWindowsPath checks if text looks like a Windows path (C:\... or \\server\...)
+func isWindowsPath(text string) bool {
+	if len(text) < 3 {
+		return false
+	}
+	// Drive letter pattern: C:\
+	if text[1] == ':' && (text[2] == '\\' || text[2] == '/') {
+		return true
+	}
+	// UNC path: \\server
+	if text[0] == '\\' && text[1] == '\\' {
+		return true
+	}
+	return false
+}
+
+// handleFileDrop initiates the file import workflow
+func (m Model) handleFileDrop(sourcePath string) (tea.Model, tea.Cmd) {
+	// Don't allow if another overlay is active
+	if m.showingHelp || m.searching || m.showingDocs || m.selectMode ||
+		m.gitStatusMode || m.fileOpMode != FileOpNone {
+		return m, nil
+	}
+
+	m.clearAllOverlays()
+	m.fileOpMode = FileOpImport
+	m.fileOpSourcePath = sourcePath
+	m.fileOpTargetPath = m.getTargetDirectory()
+	m.fileOpInput.SetValue(filepath.Base(sourcePath))
+	m.fileOpInput.Placeholder = "filename"
+	m.fileOpInput.Focus()
+	m.fileOpError = ""
+
+	return m, textinput.Blink
+}
+
+// openInOS opens a file using the OS default application
+func openInOS(path string) tea.Cmd {
+	return func() tea.Msg {
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("open", path)
+		case "windows":
+			cmd = exec.Command("cmd", "/c", "start", "", path)
+		default: // linux, freebsd, etc.
+			cmd = exec.Command("xdg-open", path)
+		}
+		cmd.Start() // Don't wait for the process to complete
+		return nil
+	}
 }

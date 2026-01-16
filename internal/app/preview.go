@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/connorleisz/contexTUI/internal/filetype"
 	"github.com/connorleisz/contexTUI/internal/git"
 	"github.com/muesli/reflow/wordwrap"
 )
@@ -35,9 +36,19 @@ func (m Model) UpdatePreview() (Model, tea.Cmd) {
 	e := flat[m.cursor]
 	if e.IsDir {
 		m.preview.SetContent("Directory: " + e.Name)
+		m.previewIsImage = false
 		m.loading = false
 		return m, nil
 	}
+
+	// Check if this is an image file
+	if filetype.IsImage(e.Path) {
+		return m.updateImagePreview(e)
+	}
+
+	// Clear image preview state for text files
+	m.previewIsImage = false
+	m.currentImage = nil
 
 	// Check cache first
 	if cached, ok := m.previewCache[e.Path]; ok {
@@ -65,6 +76,39 @@ func (m Model) UpdatePreview() (Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		return LoadFileContent(filePath, fileName, previewWidth)
 	}
+}
+
+// updateImagePreview handles image file preview
+func (m Model) updateImagePreview(e Entry) (Model, tea.Cmd) {
+	m.previewIsImage = true
+	m.previewPath = e.Path
+
+	viewportW := m.preview.Width
+	viewportH := m.preview.Height
+
+	// Check image cache first
+	if cached, ok := m.imageCache[e.Path]; ok {
+		if validateImageCache(cached, e.Path, viewportW, viewportH) {
+			// Cache hit - use cached render
+			m.currentImage = &ImageLoadedMsg{
+				Path:       e.Path,
+				Width:      cached.Width,
+				Height:     cached.Height,
+				RenderW:    cached.RenderW,
+				RenderH:    cached.RenderH,
+				RenderData: cached.RenderData,
+				ModTime:    cached.ModTime,
+			}
+			m.loading = false
+			return m, nil
+		}
+	}
+
+	// Set loading state and trigger async load
+	m.loading = true
+	m.currentImage = nil
+
+	return m, loadImageAsync(e.Path, m.termCaps, viewportW, viewportH)
 }
 
 // LoadFileContent loads and processes file content for preview
